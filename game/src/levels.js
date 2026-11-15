@@ -1,81 +1,109 @@
-// The six levels, each a hand-built pattern of crystal bricks. One character per brick:
-//   '.'  empty
-//   '1'  a crystal of 1 hit
-//   '2'  a crystal of 2 hits
-//   '3'  a crystal of 3 hits
-//   'X'  steel: never breaks, the ball bounces off it
-//   'E'  an ember brick: 1 hit, and breaking it scorches its neighbours for 1 hit each
-//   'B'  a bonus crystal: 1 hit, and always drops a powerup
-// Every row is BRICK.cols characters wide. The patterns are data, not code: the world
-// builds the same bricks from them on every run, so a level is identical for every player.
+// The six walls, hand-designed. Each wall is 8 rows of 12 characters:
+//   '.' empty          '1'..'5' crystal, dimmest to brightest
+//   'H' hard crystal (takes two hits)   'S' steel (never breaks)
+//   'E' ember (breaks, and chain-damages its neighbours)
+// Every wall has a name the banner shows when it opens.
 
-export const LEVELS = [
+export const WALLS = [
   {
-    name: 'First Light',
-    sub: 'Warm up. Shatter every crystal.',
+    name: 'FIRST LIGHT',
     rows: [
-      '..............',
-      '.111111111111.',
-      '.111111111111.',
-      '..1111111111..',
+      '............',
+      '.1111111111.',
+      '.1222222221.',
+      '.1233333321.',
+      '.1234444321.',
+      '.1233333321.',
+      '.1222222221.',
+      '.1111111111.',
     ],
   },
   {
-    name: 'Checker Dawn',
-    sub: 'Two-hit crystals join the field.',
+    name: 'TWIN SPIRES',
     rows: [
-      '.121212121212.',
-      '12121212121212',
-      '.212121212121.',
-      '..2222222222..',
+      '..11....11..',
+      '..122..221..',
+      '..12233221..',
+      '..12233221..',
+      '...1222221..',
+      '....122221..',
+      '.....1221...',
+      '......11....',
     ],
   },
   {
-    name: 'Prism Peak',
-    sub: 'Gold crystals take three hits.',
+    name: 'EMBER HEART',
     rows: [
-      '......11......',
-      '.....1221.....',
-      '....123321....',
-      '...1233321....',
-      '..123333321...',
-      '.122333333221.',
+      '............',
+      '.1111EE1111.',
+      '.1222EE2221.',
+      '.1232HH2321.',
+      '.1232HH2321.',
+      '.1222EE2221.',
+      '.1111EE1111.',
+      '............',
     ],
   },
   {
-    name: 'Iron Gate',
-    sub: 'Steel never breaks. Bonus crystals always drop a powerup.',
+    name: 'STEEL GATE',
     rows: [
-      'X111111111111X',
-      'X122222222221X',
-      'X12BBBBBBBB21X',
-      'X122222222221X',
-      'X111111111111X',
+      'SSSSSSSSSSSS',
+      'S1111111111S',
+      'S1222222221S',
+      'S1233333321S',
+      'S123E44E321S',
+      'S1234444321S',
+      'S1222222221S',
+      'S1111111111S',
     ],
   },
   {
-    name: 'Ember Fort',
-    sub: 'Ember bricks scorch their neighbours when they break.',
+    name: 'THE MAZE',
     rows: [
-      '..X..E..E..X..',
-      '.122222222221.',
-      '12E22222222E21',
-      '12233333333221',
-      '.122222222221.',
-      '..X..E..E..X..',
+      '.1..2..3..4.',
+      '.1H.2..3..4.',
+      '.11.22.33.44',
+      '............',
+      '.44.33.22.11',
+      '.4..3..2..1H',
+      '.4..3..2..1.',
+      '.E..E..E..E.',
     ],
   },
   {
-    name: 'The Crown',
-    sub: 'The last wall. Clear it and the sky is yours.',
+    name: 'THE CORE',
     rows: [
-      'X333333333333X',
-      'X322222222223X',
-      'X321111111123X',
-      'X321B2222B123X',
-      'X321111111123X',
-      'X322222222223X',
-      'X333333333333X',
+      'SSSSSSSSSSSS',
+      'S5555EE5555S',
+      'S54HHHHHH45S',
+      'S5432222345S',
+      'S5432EE2345S',
+      'S5432222345S',
+      'S54HHHHHH45S',
+      'S5555EE5555S',
     ],
   },
 ];
+
+/** Brick kinds, by the character that draws them. */
+export const KIND_CRYSTAL = 'crystal';
+export const KIND_HARD = 'hard';
+export const KIND_STEEL = 'steel';
+export const KIND_EMBER = 'ember';
+
+export function kindOf(ch) {
+  if (ch === 'H') return KIND_HARD;
+  if (ch === 'S') return KIND_STEEL;
+  if (ch === 'E') return KIND_EMBER;
+  return KIND_CRYSTAL;
+}
+
+/** Hit points of a fresh brick of this kind. */
+export function hitsOf(kind) {
+  return kind === KIND_HARD ? 2 : 1;
+}
+
+/** Whether clearing the wall needs this brick gone (steel never counts). */
+export function isBreakable(kind) {
+  return kind !== KIND_STEEL;
+}

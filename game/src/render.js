@@ -1,24 +1,20 @@
 // Drawing only: the world's state and the current screen in, pixels out. The 1280x720
-// playfield is scaled to fit the window and centred, the margin filled with the backdrop
-// colour. A neon look: a deep indigo sky with twinkling stars, glowing crystal bricks, a
-// bright paddle and ball with trails, additive particles. Text that holds a number is rebuilt
-// only when the number changes, so a frame allocates nothing.
-
-import { BALL, BRICK, FIELD, FONT, LIVES, MAX_LIVES, PALETTE, PADDLE, POWERUP } from './config.js';
-import { LEVELS } from './levels.js';
-import { KIND_BONUS, KIND_EMBER, KIND_STEEL } from './world.js';
+// playfield is scaled to fit the window and centred, the margin filled with the
+// backdrop colour. Neon crystal bricks with glow, a glowing paddle and ball, falling
+// powerup capsules, particles, and a HUD with score, best, level, lives, combo and the
+// active effects. Text that holds a number is rebuilt only when the number changes, so
+// a frame allocates nothing.
+import { BALL, BRICK, FIELD, FONT, LASER, PALETTE, PADDLE, POWERUP } from './config.js';
 import { createRandom } from './random.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
-export const SCREEN_CLEAR = 'clear';
 export const SCREEN_OVER = 'over';
 export const SCREEN_WIN = 'win';
 
-const PANEL = { width: 900, top: 150, line: 34, bottom: 76 };
-const POWERUP_LABELS = { W: 'W', M: 'M', L: 'L', S: 'S', '+': '+' };
-const POWERUP_COLORS = { W: '#37e0c8', M: '#ff5da2', L: '#ffc53d', S: '#4fd8ff', '+': '#5dff8f' };
+const PANEL = { width: 640, top: 150, line: 32, bottom: 64 };
+const STAR_COUNT = 110;
 
 function cachedLabel(prefix) {
   let value = -1;
@@ -32,13 +28,14 @@ function cachedLabel(prefix) {
   };
 }
 
-function brickFill(brick) {
-  if (brick.kind === KIND_STEEL) return PALETTE.steel;
-  if (brick.kind === KIND_EMBER) return PALETTE.explosive;
-  if (brick.kind === KIND_BONUS) return PALETTE.bonus;
-  if (brick.hp === 1) return '#37e0c8';
-  if (brick.hp === 2) return '#ff5da2';
-  return '#ffc53d';
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 export function createRenderer(canvas) {
@@ -47,21 +44,22 @@ export function createRenderer(canvas) {
   const scoreLabel = cachedLabel('SCORE ');
   const bestLabel = cachedLabel('BEST ');
   const levelLabel = cachedLabel('LEVEL ');
+  const comboLabel = cachedLabel('COMBO x');
   const finalLabel = cachedLabel('SCORE ');
-  const sky = context.createLinearGradient(0, 0, 0, FIELD.height);
-  sky.addColorStop(0, PALETTE.skyTop);
-  sky.addColorStop(1, PALETTE.skyBottom);
+  const bricksLabel = cachedLabel('BRICKS SHATTERED ');
+  const caughtLabel = cachedLabel('POWERUPS CAUGHT ');
 
-  // The starfield: fixed positions from a fixed seed, so the sky never changes between runs.
-  const starRandom = createRandom(20261116);
+  // The starfield is seeded once, so every run paints the same sky.
   const stars = [];
-  for (let index = 0; index < 90; index += 1) {
-    stars.push({ x: starRandom() * FIELD.width, y: starRandom() * 420, r: 0.6 + starRandom() * 1.6, phase: starRandom() * Math.PI * 2 });
+  const starRandom = createRandom(20261115);
+  for (let i = 0; i < STAR_COUNT; i += 1) {
+    stars.push({
+      x: starRandom() * FIELD.width,
+      y: starRandom() * FIELD.height,
+      r: 0.6 + starRandom() * 1.6,
+      twinkle: starRandom() * Math.PI * 2,
+    });
   }
-  // The ball's trail: the last few positions, kept in a ring.
-  const trail = [];
-  for (let index = 0; index < 10; index += 1) trail.push({ x: -100, y: -100 });
-  let trailAt = 0;
 
   function resize() {
     const ratio = window.devicePixelRatio || 1;
@@ -75,288 +73,279 @@ export function createRenderer(canvas) {
   }
 
   const fonts = new Map();
-  function text(value, x, y, size, color, align, weight) {
-    const key = `${weight ?? ''}${size}`;
-    if (!fonts.has(key)) fonts.set(key, `${weight ?? ''}${size}px ${FONT}`);
-    context.font = fonts.get(key);
+  function text(value, x, y, size, color, align, weight = '600') {
+    if (!fonts.has(size + weight)) fonts.set(size + weight, `${weight} ${size}px ${FONT}`);
+    context.font = fonts.get(size + weight);
     context.fillStyle = color;
     context.textAlign = align;
     context.fillText(value, x, y);
   }
 
-  function roundRect(x, y, width, height, radius) {
-    context.beginPath();
-    context.moveTo(x + radius, y);
-    context.arcTo(x + width, y, x + width, y + height, radius);
-    context.arcTo(x + width, y + height, x, y + height, radius);
-    context.arcTo(x, y + height, x, y, radius);
-    context.arcTo(x, y, x + width, y, radius);
-    context.closePath();
-  }
-
   function drawBackground(time) {
-    context.fillStyle = sky;
+    const gradient = context.createLinearGradient(0, 0, 0, FIELD.height);
+    gradient.addColorStop(0, PALETTE.skyTop);
+    gradient.addColorStop(1, PALETTE.skyBottom);
+    context.fillStyle = gradient;
     context.fillRect(0, 0, FIELD.width, FIELD.height);
-    for (let index = 0; index < stars.length; index += 1) {
-      const star = stars[index];
-      const alpha = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(time * 1.7 + star.phase));
+    for (const star of stars) {
+      const alpha = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(time * 1.4 + star.twinkle));
       context.globalAlpha = alpha;
-      context.fillStyle = PALETTE.star;
+      context.fillStyle = '#cdd6ff';
       context.fillRect(star.x, star.y, star.r, star.r);
     }
     context.globalAlpha = 1;
-    // A soft horizon glow behind the bricks.
-    const glow = context.createRadialGradient(FIELD.width / 2, 190, 40, FIELD.width / 2, 190, 520);
-    glow.addColorStop(0, 'rgba(79, 216, 255, 0.10)');
-    glow.addColorStop(1, 'rgba(79, 216, 255, 0)');
-    context.fillStyle = glow;
-    context.fillRect(0, 0, FIELD.width, 480);
+    context.fillStyle = PALETTE.ground;
+    context.fillRect(0, FIELD.height - 18, FIELD.width, 18);
   }
 
   function drawBricks(state) {
-    for (let index = 0; index < state.bricks.length; index += 1) {
-      const brick = state.bricks[index];
-      if (!brick.alive) continue;
-      const color = brickFill(brick);
+    for (const brick of state.bricks) {
+      if (!brick.active) continue;
+      const flash = brick.flash > 0;
+      if (brick.kind === 'steel') {
+        context.fillStyle = flash ? '#ffffff' : PALETTE.steel;
+        roundRect(context, brick.x, brick.y, brick.w, brick.h, 4);
+        context.fill();
+        context.fillStyle = PALETTE.steelEdge;
+        context.fillRect(brick.x + 6, brick.y + 4, brick.w - 12, 3);
+        context.fillStyle = '#5d6a84';
+        context.fillRect(brick.x + 8, brick.y + brick.h - 8, 4, 4);
+        context.fillRect(brick.x + brick.w - 12, brick.y + brick.h - 8, 4, 4);
+        continue;
+      }
+      const color = brick.kind === 'ember' ? PALETTE.ember : PALETTE.tier[brick.tier - 1];
+      const edge = brick.kind === 'ember' ? PALETTE.emberCore : PALETTE.tierEdge[brick.tier - 1];
+      context.save();
       context.shadowColor = color;
-      context.shadowBlur = brick.flash > 0 ? 22 : 10;
-      context.fillStyle = brick.flash > 0 ? '#ffffff' : color;
-      roundRect(brick.x + 1, brick.y + 1, brick.width - 2, brick.height - 2, 6);
+      context.shadowBlur = flash ? 26 : 12;
+      context.fillStyle = flash ? '#ffffff' : color;
+      roundRect(context, brick.x, brick.y, brick.w, brick.h, 5);
       context.fill();
-      context.shadowBlur = 0;
-      // A bright top edge, and pips showing how many hits a crystal still takes.
-      context.fillStyle = 'rgba(255,255,255,0.35)';
-      context.fillRect(brick.x + 6, brick.y + 3, brick.width - 12, 3);
-      if (brick.kind !== KIND_STEEL && brick.maxHp > 1 && brick.hp > 1) {
-        context.fillStyle = 'rgba(7,10,24,0.55)';
-        for (let pip = 0; pip < brick.hp; pip += 1) {
-          context.beginPath();
-          context.arc(brick.x + brick.width / 2 + (pip - (brick.hp - 1) / 2) * 12, brick.y + brick.height / 2 + 1, 3, 0, Math.PI * 2);
-          context.fill();
-        }
+      context.restore();
+      context.fillStyle = edge;
+      context.fillRect(brick.x + 5, brick.y + 4, brick.w - 10, 3);
+      if (brick.kind === 'hard') {
+        context.strokeStyle = flash ? '#ffffff' : '#2a1245';
+        context.lineWidth = brick.hits === 1 ? 2 : 3;
+        context.beginPath();
+        context.moveTo(brick.x + brick.w * 0.3, brick.y + 4);
+        context.lineTo(brick.x + brick.w * 0.45, brick.y + brick.h / 2);
+        context.lineTo(brick.x + brick.w * 0.35, brick.y + brick.h - 4);
+        context.moveTo(brick.x + brick.w * 0.65, brick.y + 4);
+        context.lineTo(brick.x + brick.w * 0.55, brick.y + brick.h / 2);
+        context.lineTo(brick.x + brick.w * 0.7, brick.y + brick.h - 4);
+        context.stroke();
       }
-      if (brick.kind === KIND_EMBER) {
-        text('~', brick.x + brick.width / 2, brick.y + brick.height / 2 + 8, 18, 'rgba(7,10,24,0.8)', 'center', 'bold ');
-      }
-      if (brick.kind === KIND_BONUS) {
-        text('?', brick.x + brick.width / 2, brick.y + brick.height / 2 + 8, 18, 'rgba(7,10,24,0.8)', 'center', 'bold ');
+      if (brick.kind === 'ember') {
+        context.fillStyle = PALETTE.emberCore;
+        context.beginPath();
+        context.arc(brick.x + brick.w / 2, brick.y + brick.h / 2, 6, 0, Math.PI * 2);
+        context.fill();
       }
     }
   }
 
-  function drawPaddle(state) {
+  function drawPaddle(state, time) {
     const paddle = state.paddle;
-    const glow = paddle.laserTimer > 0 ? '#ffc53d' : PALETTE.paddleGlow;
-    context.shadowColor = glow;
+    const blink = paddle.wideTimer > 0 && paddle.wideTimer < 3 ? Math.floor(time * 6) % 2 === 0 : true;
+    if (!blink) return;
+    context.save();
+    context.shadowColor = PALETTE.paddle;
     context.shadowBlur = 18;
-    const gradient = context.createLinearGradient(paddle.x, PADDLE.y, paddle.x + paddle.width, PADDLE.y);
-    gradient.addColorStop(0, glow);
-    gradient.addColorStop(0.5, PALETTE.paddle);
-    gradient.addColorStop(1, glow);
-    context.fillStyle = gradient;
-    roundRect(paddle.x, PADDLE.y, paddle.width, PADDLE.height, 8);
+    context.fillStyle = PALETTE.paddle;
+    roundRect(context, paddle.x, PADDLE.y, paddle.width, PADDLE.height, 8);
     context.fill();
-    context.shadowBlur = 0;
+    context.restore();
+    context.fillStyle = PALETTE.paddleCore;
+    roundRect(context, paddle.x + 8, PADDLE.y + 4, paddle.width - 16, 5, 3);
+    context.fill();
     if (paddle.laserTimer > 0) {
-      context.fillStyle = '#ffc53d';
-      context.fillRect(paddle.x + 6, PADDLE.y - 10, 6, 12);
-      context.fillRect(paddle.x + paddle.width - 12, PADDLE.y - 10, 6, 12);
-    }
-    if (paddle.wideTimer > 0) {
-      context.fillStyle = '#37e0c8';
-      context.fillRect(paddle.x + paddle.width / 2 - 14, PADDLE.y + 5, 28, 5);
+      context.fillStyle = PALETTE.gold;
+      context.fillRect(paddle.x + 6, PADDLE.y - 10, 8, 10);
+      context.fillRect(paddle.x + paddle.width - 14, PADDLE.y - 10, 8, 10);
     }
   }
 
   function drawBalls(state) {
-    for (let index = 0; index < state.balls.length; index += 1) {
-      const ball = state.balls[index];
+    for (const ball of state.balls) {
       if (!ball.active) continue;
-      trail[trailAt] = { x: ball.x, y: ball.y };
-      trailAt = (trailAt + 1) % trail.length;
-      for (let step = 0; step < trail.length; step += 1) {
-        const point = trail[(trailAt + step) % trail.length];
-        const alpha = (step / trail.length) * 0.25;
-        context.globalAlpha = alpha;
-        context.fillStyle = PALETTE.ballGlow;
-        context.beginPath();
-        context.arc(point.x, point.y, BALL.radius * (0.4 + 0.6 * (step / trail.length)), 0, Math.PI * 2);
-        context.fill();
-      }
-      context.globalAlpha = 1;
-      context.shadowColor = PALETTE.ballGlow;
+      context.save();
+      context.shadowColor = PALETTE.ballTrail;
       context.shadowBlur = 16;
       context.fillStyle = PALETTE.ball;
       context.beginPath();
-      context.arc(ball.x, ball.y, BALL.radius, 0, Math.PI * 2);
+      context.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
       context.fill();
-      context.shadowBlur = 0;
+      context.restore();
+      context.fillStyle = '#bff4ff';
+      context.beginPath();
+      context.arc(ball.x - 2, ball.y - 2, ball.r * 0.35, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+
+  function drawPowerups(state) {
+    context.textBaseline = 'alphabetic';
+    for (const p of state.powerups) {
+      if (!p.active) continue;
+      const color = PALETTE.power[p.kind];
+      const half = POWERUP.size / 2;
+      context.save();
+      context.shadowColor = color;
+      context.shadowBlur = 14;
+      context.fillStyle = '#14082e';
+      roundRect(context, p.x - half, p.y - half, POWERUP.size, POWERUP.size, 8);
+      context.fill();
+      context.restore();
+      context.strokeStyle = color;
+      context.lineWidth = 2;
+      roundRect(context, p.x - half, p.y - half, POWERUP.size, POWERUP.size, 8);
+      context.stroke();
+      text(p.kind === '+' ? '+' : p.kind, p.x, p.y + 7, 20, color, 'center', '800');
     }
   }
 
   function drawBolts(state) {
-    context.fillStyle = '#ffe9a8';
-    context.shadowColor = '#ffc53d';
-    context.shadowBlur = 12;
-    for (let index = 0; index < state.bolts.length; index += 1) {
-      const bolt = state.bolts[index];
+    context.fillStyle = PALETTE.gold;
+    for (const bolt of state.bolts) {
       if (!bolt.active) continue;
-      roundRect(bolt.x - 3, bolt.y - 14, 6, 18, 3);
-      context.fill();
-    }
-    context.shadowBlur = 0;
-  }
-
-  function drawPowerups(state) {
-    for (let index = 0; index < state.powerups.length; index += 1) {
-      const powerup = state.powerups[index];
-      if (!powerup.active) continue;
-      const color = POWERUP_COLORS[powerup.kind];
-      context.shadowColor = color;
-      context.shadowBlur = 12;
-      context.fillStyle = '#12172e';
-      roundRect(powerup.x - POWERUP.size / 2, powerup.y - POWERUP.size / 2, POWERUP.size, POWERUP.size, 7);
-      context.fill();
-      context.shadowBlur = 0;
-      context.strokeStyle = color;
-      context.lineWidth = 2;
-      context.stroke();
-      text(POWERUP_LABELS[powerup.kind], powerup.x, powerup.y + 7, 17, color, 'center', 'bold ');
+      context.save();
+      context.shadowColor = PALETTE.gold;
+      context.shadowBlur = 10;
+      context.fillRect(bolt.x - LASER.width / 2, bolt.y, LASER.width, LASER.height);
+      context.restore();
     }
   }
 
   function drawParticles(state) {
-    context.globalCompositeOperation = 'lighter';
-    for (let index = 0; index < state.particles.length; index += 1) {
-      const particle = state.particles[index];
-      if (!particle.active) continue;
-      context.globalAlpha = Math.max(0, particle.life / particle.maxLife);
-      context.fillStyle = particle.color;
-      context.fillRect(particle.x - particle.size / 2, particle.y - particle.size / 2, particle.size, particle.size);
-    }
-    context.globalAlpha = 1;
-    context.globalCompositeOperation = 'source-over';
-  }
-
-  function drawFloaters(state) {
-    context.textBaseline = 'alphabetic';
-    for (let index = 0; index < state.floaters.length; index += 1) {
-      const floater = state.floaters[index];
-      if (!floater.active) continue;
-      context.globalAlpha = Math.min(1, floater.life * 2);
-      text(floater.text, floater.x, floater.y, 18, PALETTE.gold, 'center', 'bold ');
+    for (const p of state.particles) {
+      if (!p.active) continue;
+      context.globalAlpha = Math.max(0, p.life / p.maxLife);
+      context.fillStyle = p.color;
+      context.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     context.globalAlpha = 1;
   }
 
-  function drawHeart(x, y, size, filled) {
-    context.fillStyle = filled ? '#ff5d7a' : 'rgba(154,163,192,0.25)';
-    context.beginPath();
-    context.moveTo(x, y + size * 0.35);
-    context.bezierCurveTo(x - size * 0.55, y - size * 0.25, x - size * 0.15, y - size * 0.6, x, y - size * 0.15);
-    context.bezierCurveTo(x + size * 0.15, y - size * 0.6, x + size * 0.55, y - size * 0.25, x, y + size * 0.35);
-    context.fill();
-  }
-
-  function drawHud(state, best, mult) {
+  function drawHud(state, best) {
     context.textBaseline = 'top';
-    text(scoreLabel(state.score), 28, 22, 26, PALETTE.text, 'left', 'bold ');
-    text(bestLabel(best), 28, 54, 16, PALETTE.muted, 'left');
-    const level = LEVELS[state.levelIndex];
-    text(`${levelLabel(state.levelIndex + 1)} — ${level.name.toUpperCase()}`, FIELD.width / 2, 22, 22, PALETTE.text, 'center', 'bold ');
-    const left = bricksLeftText(state);
-    text(left, FIELD.width / 2, 54, 16, PALETTE.muted, 'center');
-    for (let life = 0; life < MAX_LIVES; life += 1) {
-      drawHeart(FIELD.width - 40 - life * 30, 46, 22, life < state.lives);
+    text(scoreLabel(state.score), 24, 18, 26, PALETTE.text, 'left');
+    text(bestLabel(best), 300, 18, 26, PALETTE.muted, 'left');
+    text(levelLabel(`${state.level} / 6`), FIELD.width / 2, 18, 26, PALETTE.text, 'center');
+    // Lives as glowing pips, top right.
+    const pips = 5;
+    const size = 16;
+    const gap = 7;
+    const first = FIELD.width - 24 - pips * (size + gap) + gap;
+    text('LIVES', first - 14, 18, 26, PALETTE.muted, 'right');
+    for (let i = 0; i < pips; i += 1) {
+      context.fillStyle = i < state.lives ? '#ff5c7a' : '#2a2144';
+      context.save();
+      if (i < state.lives) {
+        context.shadowColor = '#ff5c7a';
+        context.shadowBlur = 8;
+      }
+      context.beginPath();
+      context.arc(first + i * (size + gap) + size / 2, 30, size / 2, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
     }
-    if (mult > 1) {
-      text(`COMBO x${mult}`, FIELD.width - 28, 66, 20, PALETTE.gold, 'right', 'bold ');
+    // Combo meter under the score.
+    if (state.multiplier > 1) {
+      text(comboLabel(state.multiplier), 24, 52, 22, PALETTE.gold, 'left', '800');
+      context.fillStyle = '#2a2144';
+      context.fillRect(24, 80, 120, 6);
+      context.fillStyle = PALETTE.gold;
+      context.fillRect(24, 80, (120 * state.multiplier) / 5, 6);
     }
-    if (state.paddle.laserTimer > 0) text('LASER', FIELD.width - 28, 92, 16, '#ffc53d', 'right', 'bold ');
-    else if (state.paddle.wideTimer > 0) text('WIDE', FIELD.width - 28, 92, 16, '#37e0c8', 'right', 'bold ');
-    else if (state.slowTimer > 0) text('SLOW', FIELD.width - 28, 92, 16, '#4fd8ff', 'right', 'bold ');
+    // Active effects, top right under the lives.
+    const effects = [];
+    if (state.paddle.wideTimer > 0) effects.push(`WIDE ${Math.ceil(state.paddle.wideTimer)}s`);
+    if (state.paddle.laserTimer > 0) effects.push(`LASER ${Math.ceil(state.paddle.laserTimer)}s`);
+    if (state.slowTimer > 0) effects.push(`SLOW ${Math.ceil(state.slowTimer)}s`);
+    for (let i = 0; i < effects.length; i += 1) {
+      text(effects[i], FIELD.width - 24, 52 + i * 24, 18, PALETTE.gold, 'right');
+    }
+    // How to play, small, bottom left during play.
+    text('Arrows / A D or mouse — Space launch / fire — P pause — M mute', 24, FIELD.height - 26, 15, PALETTE.muted, 'left', '400');
   }
 
-  function bricksLeftText(state) {
-    let left = 0;
-    for (let index = 0; index < state.bricks.length; index += 1) {
-      if (state.bricks[index].alive && state.bricks[index].kind !== KIND_STEEL) left += 1;
-    }
-    return `${left} crystals left`;
+  function drawBanner(state) {
+    if (state.bannerTimer <= 0 || state.banner === '') return;
+    context.textBaseline = 'alphabetic';
+    const alpha = Math.min(1, state.bannerTimer);
+    context.save();
+    context.globalAlpha = alpha;
+    text(`LEVEL ${state.level}`, FIELD.width / 2, 330, 30, PALETTE.muted, 'center');
+    text(state.banner, FIELD.width / 2, 380, 54, PALETTE.banner, 'center', '800');
+    context.restore();
   }
 
-  function drawPanel(title, lines, prompt) {
+  function drawPanel(title, lines, prompt, accent) {
     const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
     const x = (FIELD.width - PANEL.width) / 2;
     const y = (FIELD.height - height) / 2;
-    context.fillStyle = 'rgba(7,10,24,0.62)';
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.shadowColor = PALETTE.panelEdge;
-    context.shadowBlur = 30;
-    context.fillStyle = PALETTE.panel;
-    roundRect(x, y, PANEL.width, height, 16);
+    context.fillStyle = 'rgba(10, 4, 28, 0.88)';
+    roundRect(context, x, y, PANEL.width, height, 16);
     context.fill();
-    context.shadowBlur = 0;
-    context.strokeStyle = PALETTE.panelEdge;
+    context.strokeStyle = accent;
     context.lineWidth = 2;
+    roundRect(context, x, y, PANEL.width, height, 16);
     context.stroke();
     context.textBaseline = 'alphabetic';
-    context.shadowColor = '#4fd8ff';
-    context.shadowBlur = 24;
-    text(title, FIELD.width / 2, y + 82, 52, PALETTE.text, 'center', 'bold ');
-    context.shadowBlur = 0;
+    text(title, FIELD.width / 2, y + 76, 46, accent, 'center', '800');
     for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 21, PALETTE.muted, 'center');
+      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 21, PALETTE.muted, 'center', '400');
     }
-    text(prompt, FIELD.width / 2, y + height - 38, 23, PALETTE.gold, 'center', 'bold ');
+    text(prompt, FIELD.width / 2, y + height - 36, 23, PALETTE.gold, 'center');
   }
 
-  const TITLE_LINES = [
-    'Shatter every crystal. Clear all six walls to win.',
-    'Move with the mouse or ← → / A D. Space launches the ball.',
-    'Powerups: W wide · M multi-ball · L laser · S slow · + life.',
-    '',
-  ];
-  const PAUSED_LINES = ['The crystals will wait for you.'];
-  const CLEAR_LINES = [''];
-  const OVER_LINES = ['', ''];
-  const WIN_LINES = ['', 'All six walls shattered. The sky is yours.'];
-
   /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best, mult) {
+  function draw(state, screen, best, time) {
     context.setTransform(1, 0, 0, 1, 0, 0);
-    context.textBaseline = 'alphabetic';
     context.fillStyle = PALETTE.backdrop;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const shakeX = state.shake > 0 ? (Math.sin(state.time * 91) * state.shake) : 0;
-    const shakeY = state.shake > 0 ? (Math.cos(state.time * 113) * state.shake) : 0;
-    context.setTransform(view.scale, 0, 0, view.scale, view.x + shakeX * view.scale, view.y + shakeY * view.scale);
-    drawBackground(state.time);
+    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
+    drawBackground(time);
     drawBricks(state);
+    drawParticles(state);
     drawPowerups(state);
     drawBolts(state);
-    drawPaddle(state);
+    drawPaddle(state, time);
     drawBalls(state);
-    drawParticles(state);
-    drawFloaters(state);
     if (screen === SCREEN_TITLE) {
-      TITLE_LINES[3] = best > 0 ? bestLabel(best) : 'No best score yet — set one.';
-      drawPanel('LUMENBREAK', TITLE_LINES, 'Press Space or click to play');
+      const lines = [
+        'Shatter every crystal wall. Chain the embers.',
+        'Catch falling powerups: W wide · M multi-ball · L laser',
+        'S slow · + extra life. Steel never breaks.',
+        'Move with ← → or A D, or the mouse. Space launches the ball.',
+        best > 0 ? bestLabel(best) : '',
+      ];
+      drawPanel('LUMENBREAK', lines, 'Press Space or click to start', PALETTE.paddle);
       return;
     }
-    drawHud(state, best, mult);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_CLEAR) {
-      const level = LEVELS[state.levelIndex];
-      CLEAR_LINES[0] = `Level ${state.levelIndex + 1} — ${level.name} cleared!`;
-      drawPanel('Wall shattered!', CLEAR_LINES, 'Get ready for the next wall…');
+    drawHud(state, best);
+    drawBanner(state);
+    if (screen === SCREEN_PAUSED) {
+      drawPanel('PAUSED', ['The crystals will wait for you.'], 'Press P to resume', PALETTE.paddle);
     } else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
+      const lines = [
+        finalLabel(state.score),
+        bestLabel(best),
+        `Reached level ${state.level} of 6`,
+        bricksLabel(state.broken),
+        caughtLabel(state.caught),
+      ];
+      drawPanel('GAME OVER', lines, 'Press Space or click to play again', '#ff5c7a');
     } else if (screen === SCREEN_WIN) {
-      WIN_LINES[0] = finalLabel(state.score);
-      drawPanel('You win!', WIN_LINES, 'Press Space or click to play again');
+      const lines = [
+        'All six walls shattered. The light is yours.',
+        finalLabel(state.score),
+        bestLabel(best),
+        bricksLabel(state.broken),
+        caughtLabel(state.caught),
+      ];
+      drawPanel('YOU WIN', lines, 'Press Space or click to play again', PALETTE.gold);
     }
   }
 

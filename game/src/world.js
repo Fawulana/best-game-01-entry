@@ -1,501 +1,466 @@
-// The game's rules and state, with no drawing and no browser in it: the paddle, the balls,
-// the crystal bricks, the falling powerups, the particles and the score. step() advances one
-// fixed step and returns what happened as bit flags, so the caller can react (sounds, screens)
-// without the world knowing about screens or sound. Nothing here allocates after createWorld
-// returns, and every random choice comes from the seeded generator, so the same seed and the
-// same inputs always play the same game.
-
-import { BALL, BRICK, FIELD, LEVEL_COUNT, LIVES, MAX_LIVES, PADDLE, POOL, POWERUP, SCORE } from './config.js';
-import { LEVELS } from './levels.js';
-
-export const KIND_CRYSTAL = 'crystal';
-export const KIND_STEEL = 'steel';
-export const KIND_EMBER = 'ember';
-export const KIND_BONUS = 'bonus';
-
-export const POWER_KINDS = ['W', 'M', 'L', 'S', '+'];
+// LUMENBREAK's rules and state, with no drawing and no browser in it: the paddle, the
+// balls, the crystal walls, falling powerups, laser bolts and particles, collisions,
+// score, combo, lives and levels. step() advances one fixed step and returns what
+// happened as bit flags, so the caller can react (and play sounds) without the world
+// knowing about screens. Nothing here allocates after createWorld returns, and nothing
+// here reads the clock: the same seed and inputs always give the same game.
+import {
+  BALL, BRICK, COMBO, FIELD, LASER, LEVELS, LIVES, MAX_LIVES, PADDLE, POOL, POWERUP,
+} from './config.js';
+import { WALLS, hitsOf, isBreakable, kindOf } from './levels.js';
+import { randomPick } from './random.js';
 
 export const EVENT_BRICK = 1;
-export const EVENT_PADDLE = 2;
-export const EVENT_WALL = 4;
+export const EVENT_CRACK = 2;
+export const EVENT_POWERUP = 4;
 export const EVENT_LOST = 8;
 export const EVENT_OVER = 16;
 export const EVENT_CLEAR = 32;
 export const EVENT_WIN = 64;
-export const EVENT_POWER = 128;
-export const EVENT_LIFE = 256;
-export const EVENT_LAUNCH = 512;
-export const EVENT_EMBER = 1024;
-export const EVENT_LASER = 2048;
+export const EVENT_LIFE = 128;
+export const EVENT_PADDLE = 256;
+export const EVENT_LASER = 512;
+export const EVENT_TINK = 1024;
 
-const POWERUP_COLORS = { W: '#37e0c8', M: '#ff5da2', L: '#ffc53d', S: '#4fd8ff', '+': '#5dff8f' };
-const BRICK_COLORS = { 1: '#37e0c8', 2: '#ff5da2', 3: '#ffc53d' };
+const POWERUP_WEIGHTS = ['W', 'M', 'L', 'S', 'W', 'M', 'L', 'S', '+'];
 
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+function circleRect(ball, rect) {
+  const cx = Math.max(rect.x, Math.min(ball.x, rect.x + rect.w));
+  const cy = Math.max(rect.y, Math.min(ball.y, rect.y + rect.h));
+  const dx = ball.x - cx;
+  const dy = ball.y - cy;
+  return { hit: dx * dx + dy * dy < ball.r * ball.r, nx: dx, ny: dy, dist2: dx * dx + dy * dy };
 }
 
 export function createWorld(random) {
-  const paddle = { x: 0, width: PADDLE.width, wideTimer: 0, laserTimer: 0 };
+  const paddle = { x: 0, width: PADDLE.width, wideTimer: 0, laserTimer: 0, laserCooldown: 0 };
   const balls = [];
-  for (let index = 0; index < POOL.balls; index += 1) {
-    balls.push({ active: false, x: 0, y: 0, vx: 0, vy: 0 });
-  }
-  const powerups = [];
-  for (let index = 0; index < POOL.powerups; index += 1) {
-    powerups.push({ active: false, x: 0, y: 0, kind: 'W' });
-  }
-  const bolts = [];
-  for (let index = 0; index < POOL.bolts; index += 1) {
-    bolts.push({ active: false, x: 0, y: 0 });
-  }
-  const particles = [];
-  for (let index = 0; index < POOL.particles; index += 1) {
-    particles.push({ active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, size: 2, color: '#ffffff' });
-  }
-  const floaters = [];
-  for (let index = 0; index < POOL.floaters; index += 1) {
-    floaters.push({ active: false, x: 0, y: 0, text: '', life: 0 });
+  for (let i = 0; i < POOL.balls; i += 1) {
+    balls.push({ active: false, x: 0, y: 0, vx: 0, vy: 0, r: BALL.radius, stuck: false });
   }
   const bricks = [];
+  const powerups = [];
+  for (let i = 0; i < POOL.powerups; i += 1) powerups.push({ active: false, kind: 'W', x: 0, y: 0 });
+  const bolts = [];
+  for (let i = 0; i < POOL.bolts; i += 1) bolts.push({ active: false, x: 0, y: 0 });
+  const particles = [];
+  for (let i = 0; i < POOL.particles; i += 1) {
+    particles.push({ active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, color: '#fff', size: 2 });
+  }
   const state = {
-    paddle,
-    balls,
-    bricks,
-    powerups,
-    bolts,
-    particles,
-    floaters,
-    score: 0,
-    combo: 0,
-    lives: LIVES,
-    levelIndex: 0,
-    mode: 'serve',
-    time: 0,
-    shake: 0,
-    slowTimer: 0,
+    paddle, balls, bricks, powerups, bolts, particles,
+    score: 0, lives: LIVES, level: 1, combo: 0, multiplier: 1,
+    slowTimer: 0, broken: 0, caught: 0, fired: 0,
+    banner: '', bannerTimer: 0, levelName: '',
   };
 
-  function ballSpeed() {
-    const base = Math.min(BALL.maxSpeed, BALL.speed + BALL.speedPerLevel * state.levelIndex);
-    return state.slowTimer > 0 ? base * BALL.slowFactor : base;
-  }
-
-  function multiplier() {
-    return Math.min(SCORE.maxMultiplier, 1 + Math.floor(state.combo / SCORE.perTier));
-  }
-
   function freeBall() {
-    for (let index = 0; index < balls.length; index += 1) if (!balls[index].active) return balls[index];
+    for (const ball of balls) if (!ball.active) return ball;
     return null;
   }
-
   function freePowerup() {
-    for (let index = 0; index < powerups.length; index += 1) if (!powerups[index].active) return powerups[index];
+    for (const p of powerups) if (!p.active) return p;
     return null;
   }
-
   function freeBolt() {
-    for (let index = 0; index < bolts.length; index += 1) if (!bolts[index].active) return bolts[index];
+    for (const b of bolts) if (!b.active) return b;
     return null;
   }
-
-  function freeParticle() {
-    for (let index = 0; index < particles.length; index += 1) if (!particles[index].active) return particles[index];
-    return null;
-  }
-
-  function freeFloater() {
-    for (let index = 0; index < floaters.length; index += 1) if (!floaters[index].active) return floaters[index];
-    return null;
-  }
-
-  function spawnBurst(x, y, color, count, speed) {
-    for (let index = 0; index < count; index += 1) {
-      const particle = freeParticle();
-      if (particle === null) return;
+  function spawnParticle(x, y, color) {
+    for (const p of particles) {
+      if (p.active) continue;
       const angle = random() * Math.PI * 2;
-      const power = speed * (0.35 + random() * 0.65);
-      particle.active = true;
-      particle.x = x;
-      particle.y = y;
-      particle.vx = Math.cos(angle) * power;
-      particle.vy = Math.sin(angle) * power;
-      particle.maxLife = 0.35 + random() * 0.45;
-      particle.life = particle.maxLife;
-      particle.size = 2 + random() * 3;
-      particle.color = color;
+      const speed = 60 + random() * 260;
+      p.active = true;
+      p.x = x; p.y = y;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed - 60;
+      p.life = 0.4 + random() * 0.5;
+      p.maxLife = p.life;
+      p.color = color;
+      p.size = 2 + random() * 3;
+      return;
     }
   }
-
-  function spawnFloater(x, y, text) {
-    const floater = freeFloater();
-    if (floater === null) return;
-    floater.active = true;
-    floater.x = x;
-    floater.y = y;
-    floater.text = text;
-    floater.life = 0.9;
+  function burst(x, y, color, count) {
+    for (let i = 0; i < count; i += 1) spawnParticle(x, y, color);
   }
 
-  function brickColor(brick) {
-    if (brick.kind === KIND_STEEL) return '#8a93a6';
-    if (brick.kind === KIND_EMBER) return '#ff7a1a';
-    if (brick.kind === KIND_BONUS) return '#b78cff';
-    return BRICK_COLORS[brick.hp] ?? '#37e0c8';
+  function ballSpeed() {
+    const base = BALL.baseSpeed + BALL.speedPerLevel * (state.level - 1) + BALL.speedPerBrick * state.broken;
+    const slowed = state.slowTimer > 0 ? base * BALL.slowFactor : base;
+    return Math.min(BALL.maxSpeed, slowed);
   }
 
-  function loadLevel(index) {
-    const level = LEVELS[index];
+  function loadLevel(number) {
+    const wall = WALLS[number - 1];
+    state.level = number;
+    state.levelName = wall.name;
+    state.broken = 0;
     bricks.length = 0;
-    for (let row = 0; row < level.rows.length; row += 1) {
-      const line = level.rows[row];
+    const gridWidth = BRICK.cols * BRICK.width + (BRICK.cols - 1) * BRICK.gapX;
+    const left = (FIELD.width - gridWidth) / 2;
+    for (let row = 0; row < BRICK.rows; row += 1) {
       for (let col = 0; col < BRICK.cols; col += 1) {
-        const cell = line[col] ?? '.';
-        if (cell === '.') continue;
-        const kind = cell === 'X' ? KIND_STEEL : cell === 'E' ? KIND_EMBER : cell === 'B' ? KIND_BONUS : KIND_CRYSTAL;
-        const hp = cell === 'X' ? 0 : cell === 'E' || cell === 'B' ? 1 : Number(cell);
+        const ch = wall.rows[row][col];
+        if (ch === '.' || ch === undefined) continue;
+        const kind = kindOf(ch);
         bricks.push({
-          x: BRICK.left + col * (BRICK.width + BRICK.gapX),
+          active: true, kind, col, row,
+          tier: ch >= '1' && ch <= '5' ? Number(ch) : 1,
+          hits: hitsOf(kind), maxHits: hitsOf(kind),
+          x: left + col * (BRICK.width + BRICK.gapX),
           y: BRICK.top + row * (BRICK.height + BRICK.gapY),
-          width: BRICK.width,
-          height: BRICK.height,
-          hp,
-          maxHp: hp,
-          kind,
-          alive: true,
-          flash: 0,
-          row,
-          col,
+          w: BRICK.width, h: BRICK.height, flash: 0,
         });
       }
     }
-    for (const ball of balls) ball.active = false;
-    for (const powerup of powerups) powerup.active = false;
-    for (const bolt of bolts) bolt.active = false;
-    paddle.x = (FIELD.width - paddle.width) / 2;
-    paddle.wideTimer = 0;
-    paddle.laserTimer = 0;
-    state.slowTimer = 0;
-    state.levelIndex = index;
-    state.mode = 'serve';
-    serveBall();
+    for (const p of powerups) p.active = false;
+    for (const b of bolts) b.active = false;
+    state.banner = wall.name;
+    state.bannerTimer = 2.2;
   }
 
   function serveBall() {
     const ball = freeBall();
     if (ball === null) return;
     ball.active = true;
+    ball.stuck = true;
+    ball.r = BALL.radius;
     ball.x = paddle.x + paddle.width / 2;
-    ball.y = PADDLE.y - BALL.radius - 1;
+    ball.y = PADDLE.y - ball.r - 1;
     ball.vx = 0;
     ball.vy = 0;
   }
 
-  function launch() {
-    if (state.mode !== 'serve') return 0;
-    const ball = balls.find((candidate) => candidate.active);
-    if (ball === undefined) return 0;
-    const speed = ballSpeed();
-    const angle = (random() * 2 - 1) * 0.35;
-    ball.vx = Math.sin(angle) * speed;
-    ball.vy = -Math.cos(angle) * speed;
-    state.mode = 'play';
-    return EVENT_LAUNCH;
-  }
-
   function reset() {
-    state.score = 0;
-    state.combo = 0;
-    state.lives = LIVES;
-    state.time = 0;
-    state.shake = 0;
+    paddle.x = (FIELD.width - PADDLE.width) / 2;
     paddle.width = PADDLE.width;
-    for (const particle of particles) particle.active = false;
-    for (const floater of floaters) floater.active = false;
-    loadLevel(0);
+    paddle.wideTimer = 0;
+    paddle.laserTimer = 0;
+    paddle.laserCooldown = 0;
+    for (const ball of balls) ball.active = false;
+    for (const p of particles) p.active = false;
+    state.score = 0;
+    state.lives = LIVES;
+    state.combo = 0;
+    state.multiplier = 1;
+    state.slowTimer = 0;
+    state.caught = 0;
+    state.fired = 0;
+    loadLevel(1);
+    serveBall();
   }
 
-  function bricksLeft() {
-    let count = 0;
-    for (let index = 0; index < bricks.length; index += 1) {
-      if (bricks[index].alive && bricks[index].kind !== KIND_STEEL) count += 1;
-    }
-    return count;
+  function breakableLeft() {
+    let n = 0;
+    for (const b of bricks) if (b.active && isBreakable(b.kind)) n += 1;
+    return n;
   }
 
-  function maybeDropPowerup(x, y, guaranteed) {
-    if (!guaranteed && random() >= POWERUP.dropChance) return;
-    const powerup = freePowerup();
-    if (powerup === null) return;
-    powerup.active = true;
-    powerup.x = x;
-    powerup.y = y;
-    powerup.kind = POWER_KINDS[Math.floor(random() * POWER_KINDS.length)];
+  function dropPowerup(x, y) {
+    if (random() > BRICK.dropChance) return;
+    const p = freePowerup();
+    if (p === null) return;
+    p.active = true;
+    p.kind = randomPick(random, POWERUP_WEIGHTS);
+    p.x = x;
+    p.y = y;
   }
 
-  function damageBrick(brick, amount) {
-    if (!brick.alive || brick.kind === KIND_STEEL) return 0;
-    brick.hp -= amount;
+  /** Damage one brick by 1. Returns true when it broke. Ember breaks chain to neighbours. */
+  function damageBrick(brick, events, chain) {
+    if (!brick.active) return events;
+    brick.hits -= 1;
     brick.flash = 0.12;
-    if (brick.hp > 0) return EVENT_BRICK;
-    brick.alive = false;
-    state.combo += 1;
-    const points = SCORE.brick * multiplier();
-    state.score += points;
-    spawnFloater(brick.x + brick.width / 2, brick.y, `+${points}`);
-    spawnBurst(brick.x + brick.width / 2, brick.y + brick.height / 2, brickColor(brick), 14, 260);
-    state.shake = Math.min(state.shake + 1.5, 6);
-    let events = EVENT_BRICK;
-    if (brick.kind === KIND_EMBER) {
-      events |= EVENT_EMBER;
-      for (let index = 0; index < bricks.length; index += 1) {
-        const other = bricks[index];
-        if (other === brick || !other.alive) continue;
-        if (Math.abs(other.row - brick.row) <= 1 && Math.abs(other.col - brick.col) <= 1) {
-          events |= damageBrick(other, 1);
-        }
-      }
+    if (brick.hits > 0) {
+      state.score += BRICK.crackPoints * state.multiplier;
+      return events | EVENT_CRACK;
     }
-    maybeDropPowerup(brick.x + brick.width / 2, brick.y + brick.height / 2, brick.kind === KIND_BONUS);
-    if (bricksLeft() === 0) {
-      events |= EVENT_CLEAR;
-      if (state.levelIndex === LEVEL_COUNT - 1) events |= EVENT_WIN;
+    brick.active = false;
+    state.broken += 1;
+    state.combo += 1;
+    state.multiplier = Math.min(state.combo, COMBO.maxMultiplier);
+    const points = brick.kind === 'hard' ? BRICK.hardPoints : brick.kind === 'ember' ? BRICK.emberPoints : BRICK.points;
+    state.score += points * state.multiplier;
+    const cx = brick.x + brick.w / 2;
+    const cy = brick.y + brick.h / 2;
+    burst(cx, cy, brick.kind === 'ember' ? '#ff7a2f' : '#b45cff', brick.kind === 'ember' ? 26 : 16);
+    dropPowerup(cx, cy);
+    events |= EVENT_BRICK;
+    if (brick.kind === 'ember') {
+      for (const other of bricks) {
+        if (!other.active || other === brick) continue;
+        if (Math.abs(other.col - brick.col) <= 1 && Math.abs(other.row - brick.row) <= 1) chain.push(other);
+      }
     }
     return events;
   }
 
   function applyPowerup(kind) {
+    state.caught += 1;
     if (kind === 'W') {
       paddle.wideTimer = PADDLE.wideSeconds;
       paddle.width = PADDLE.wideWidth;
     } else if (kind === 'M') {
-      const live = balls.filter((ball) => ball.active);
-      for (const ball of live) {
-        const copy = freeBall();
-        if (copy === null) break;
-        copy.active = true;
-        copy.x = ball.x;
-        copy.y = ball.y;
-        copy.vx = -ball.vx || ballSpeed() * 0.4;
-        copy.vy = ball.vy;
+      const flying = balls.filter((b) => b.active && !b.stuck);
+      for (const source of flying) {
+        for (const angle of [-0.45, 0.45]) {
+          const ball = freeBall();
+          if (ball === null) break;
+          const speed = Math.hypot(source.vx, source.vy);
+          const base = Math.atan2(source.vy, source.vx) + angle;
+          ball.active = true;
+          ball.stuck = false;
+          ball.r = BALL.radius;
+          ball.x = source.x;
+          ball.y = source.y;
+          ball.vx = Math.cos(base) * speed;
+          ball.vy = Math.sin(base) * speed;
+        }
+        if (balls.filter((b) => b.active).length >= POOL.balls) break;
       }
     } else if (kind === 'L') {
       paddle.laserTimer = PADDLE.laserSeconds;
     } else if (kind === 'S') {
       state.slowTimer = BALL.slowSeconds;
     } else if (kind === '+') {
-      if (state.lives < MAX_LIVES) state.lives += 1;
-      return EVENT_POWER | EVENT_LIFE;
+      if (state.lives < MAX_LIVES) {
+        state.lives += 1;
+        return EVENT_LIFE;
+      }
+      state.score += 500;
     }
-    return EVENT_POWER;
+    return EVENT_POWERUP;
   }
 
-  function fireLaser() {
-    if (paddle.laserTimer <= 0 || state.mode !== 'play') return 0;
-    let fired = false;
-    for (const side of [-1, 1]) {
+  function launchBall(ball) {
+    if (!ball.stuck) return;
+    ball.stuck = false;
+    const speed = ballSpeed();
+    const angle = -Math.PI / 2 + (random() - 0.5) * 0.5;
+    ball.vx = Math.cos(angle) * speed;
+    ball.vy = Math.sin(angle) * speed;
+  }
+
+  function fireLasers() {
+    if (paddle.laserTimer <= 0 || paddle.laserCooldown > 0) return 0;
+    paddle.laserCooldown = LASER.cooldown;
+    state.fired += 2;
+    for (const dx of [-paddle.width / 2 + 12, paddle.width / 2 - 12]) {
       const bolt = freeBolt();
       if (bolt === null) continue;
       bolt.active = true;
-      bolt.x = paddle.x + paddle.width / 2 + side * (paddle.width / 2 - 10);
-      bolt.y = PADDLE.y - 6;
-      fired = true;
+      bolt.x = paddle.x + paddle.width / 2 + dx;
+      bolt.y = PADDLE.y - LASER.height;
     }
-    return fired ? EVENT_LASER : 0;
-  }
-
-  function stepFx(dt) {
-    state.time += dt;
-    if (state.shake > 0) state.shake = Math.max(0, state.shake - 30 * dt);
-    for (let index = 0; index < particles.length; index += 1) {
-      const particle = particles[index];
-      if (!particle.active) continue;
-      particle.life -= dt;
-      if (particle.life <= 0) {
-        particle.active = false;
-        continue;
-      }
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-      particle.vy += 300 * dt;
-    }
-    for (let index = 0; index < floaters.length; index += 1) {
-      const floater = floaters[index];
-      if (!floater.active) continue;
-      floater.life -= dt;
-      if (floater.life <= 0) floater.active = false;
-      else floater.y -= 42 * dt;
-    }
-    for (let index = 0; index < bricks.length; index += 1) {
-      if (bricks[index].flash > 0) bricks[index].flash = Math.max(0, bricks[index].flash - dt);
-    }
+    return EVENT_LASER;
   }
 
   /**
-   * One fixed step. `input` is { direction, pointerX, fire }; `harmless` is the title
-   * screen's demo: the ball bounces but nothing breaks and nothing scores.
+   * One fixed step. `control` is { direction (-1, 0, 1), mouseX (number or null),
+   * launch (bool), fire (bool) }. With `attract` set (the title screen's demo) the
+   * ball bounces off the bottom, bricks never break and nothing scores.
    */
-  function step(dt, input, harmless) {
+  function step(dt, control, attract) {
     let events = 0;
-    stepFx(dt);
+    if (state.bannerTimer > 0) state.bannerTimer = Math.max(0, state.bannerTimer - dt);
     if (paddle.wideTimer > 0) {
       paddle.wideTimer -= dt;
       if (paddle.wideTimer <= 0) paddle.width = PADDLE.width;
     }
     if (paddle.laserTimer > 0) paddle.laserTimer -= dt;
+    if (paddle.laserCooldown > 0) paddle.laserCooldown -= dt;
     if (state.slowTimer > 0) state.slowTimer -= dt;
 
-    // The paddle: the mouse steers it straight to its x; the keys drive it at full speed.
-    if (harmless) {
-      const ball = balls.find((candidate) => candidate.active);
-      const target = ball === undefined ? FIELD.width / 2 : ball.x;
-      const wanted = Math.max(0, Math.min(FIELD.width - paddle.width, target - paddle.width / 2));
-      const delta = wanted - paddle.x;
-      paddle.x += Math.max(-PADDLE.speed * dt, Math.min(PADDLE.speed * dt, delta));
-    } else if (input.pointerX !== null && input.pointerX !== undefined) {
-      paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, input.pointerX - paddle.width / 2));
-    } else {
-      paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, paddle.x + input.direction * PADDLE.speed * dt));
-    }
-    if (input.fire) events |= fireLaser();
-    const centre = paddle.x + paddle.width / 2;
-
-    if (state.mode === 'serve') {
-      const ball = balls.find((candidate) => candidate.active);
-      if (ball !== undefined) {
-        ball.x = paddle.x + paddle.width / 2;
-        ball.y = PADDLE.y - BALL.radius - 1;
+    // Paddle: the mouse steers it when it moved, else the keys.
+    if (control.mouseX !== null && !attract) {
+      const target = Math.max(0, Math.min(FIELD.width - paddle.width, control.mouseX - paddle.width / 2));
+      const delta = target - paddle.x;
+      const maxMove = PADDLE.speed * 1.6 * dt;
+      paddle.x += Math.max(-maxMove, Math.min(maxMove, delta));
+    } else if (attract) {
+      const flying = balls.find((b) => b.active && !b.stuck);
+      if (flying !== undefined) {
+        const target = Math.max(0, Math.min(FIELD.width - paddle.width, flying.x - paddle.width / 2));
+        const delta = target - paddle.x;
+        paddle.x += Math.max(-PADDLE.speed * dt, Math.min(PADDLE.speed * dt, delta));
       }
-      return events;
+    } else {
+      paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, paddle.x + control.direction * PADDLE.speed * dt));
     }
 
-    for (let index = 0; index < balls.length; index += 1) {
-      const ball = balls[index];
+    if (control.fire) events |= fireLasers();
+    for (const ball of balls) {
       if (!ball.active) continue;
-      const prevX = ball.x;
-      const prevY = ball.y;
+      if (ball.stuck) {
+        ball.x = paddle.x + paddle.width / 2;
+        ball.y = PADDLE.y - ball.r - 1;
+        if (control.launch) launchBall(ball);
+      }
+    }
+
+    // Laser bolts: straight up, one brick of damage each.
+    for (const bolt of bolts) {
+      if (!bolt.active) continue;
+      bolt.y -= LASER.speed * dt;
+      if (bolt.y < FIELD.top - 40) {
+        bolt.active = false;
+        continue;
+      }
+      for (const brick of bricks) {
+        if (!brick.active) continue;
+        if (bolt.x > brick.x && bolt.x < brick.x + brick.w && bolt.y > brick.y && bolt.y < brick.y + brick.h) {
+          bolt.active = false;
+          if (brick.kind === 'steel') {
+            brick.flash = 0.12;
+            events |= EVENT_TINK;
+          } else {
+            const chain = [];
+            events |= damageBrick(brick, 0, chain);
+            while (chain.length > 0) events |= damageBrick(chain.pop(), 0, chain);
+          }
+          break;
+        }
+      }
+    }
+
+    // Balls.
+    for (const ball of balls) {
+      if (!ball.active || ball.stuck) continue;
       ball.x += ball.vx * dt;
       ball.y += ball.vy * dt;
-
-      if (ball.x - BALL.radius < 0) {
-        ball.x = BALL.radius;
+      if (ball.x - ball.r < 0) {
+        ball.x = ball.r;
         ball.vx = Math.abs(ball.vx);
-        events |= EVENT_WALL;
-      } else if (ball.x + BALL.radius > FIELD.width) {
-        ball.x = FIELD.width - BALL.radius;
+      } else if (ball.x + ball.r > FIELD.width) {
+        ball.x = FIELD.width - ball.r;
         ball.vx = -Math.abs(ball.vx);
-        events |= EVENT_WALL;
       }
-      if (ball.y - BALL.radius < 0) {
-        ball.y = BALL.radius;
+      if (ball.y - ball.r < 0) {
+        ball.y = ball.r;
         ball.vy = Math.abs(ball.vy);
-        events |= EVENT_WALL;
       }
-
-      // The paddle: bounce up, steeper the further from its centre the ball lands.
-      if (ball.vy > 0 && ball.y + BALL.radius >= PADDLE.y && ball.y - BALL.radius <= PADDLE.y + PADDLE.height
-        && ball.x >= paddle.x - BALL.radius && ball.x <= paddle.x + paddle.width + BALL.radius) {
-        const offset = Math.max(-1, Math.min(1, (ball.x - centre) / (paddle.width / 2)));
-        const speed = Math.hypot(ball.vx, ball.vy);
-        const angle = offset * BALL.maxAngle;
-        ball.vx = Math.sin(angle) * speed;
-        ball.vy = -Math.cos(angle) * speed;
-        ball.y = PADDLE.y - BALL.radius - 0.5;
-        spawnBurst(ball.x, PADDLE.y, '#e8f6ff', 4, 120);
+      // Paddle bounce: the angle follows where the ball lands on the paddle.
+      if (ball.vy > 0 && ball.y + ball.r >= PADDLE.y && ball.y + ball.r <= PADDLE.y + PADDLE.height + 8
+        && ball.x >= paddle.x - ball.r && ball.x <= paddle.x + paddle.width + ball.r) {
+        const offset = Math.max(-1, Math.min(1, (ball.x - (paddle.x + paddle.width / 2)) / (paddle.width / 2)));
+        const speed = ballSpeed();
+        const angle = -Math.PI / 2 + offset * 1.05;
+        ball.vx = Math.cos(angle) * speed;
+        ball.vy = Math.sin(angle) * speed;
+        ball.y = PADDLE.y - ball.r - 0.5;
+        state.combo = 0;
+        state.multiplier = 1;
         events |= EVENT_PADDLE;
       }
-
-      // The bricks: a circle against a box, reflected on the side it came from.
-      for (let brickIndex = 0; brickIndex < bricks.length; brickIndex += 1) {
-        const brick = bricks[brickIndex];
-        if (!brick.alive) continue;
-        const nearestX = Math.max(brick.x, Math.min(ball.x, brick.x + brick.width));
-        const nearestY = Math.max(brick.y, Math.min(ball.y, brick.y + brick.height));
-        const dx = ball.x - nearestX;
-        const dy = ball.y - nearestY;
-        if (dx * dx + dy * dy >= BALL.radius * BALL.radius) continue;
-        const fromTop = prevY + BALL.radius <= brick.y;
-        const fromBottom = prevY - BALL.radius >= brick.y + brick.height;
-        if (fromTop || fromBottom) {
-          ball.vy = fromTop ? -Math.abs(ball.vy) : Math.abs(ball.vy);
-          ball.y = fromTop ? brick.y - BALL.radius - 0.5 : brick.y + brick.height + BALL.radius + 0.5;
+      // Bricks: reflect off the closest point's normal, then damage.
+      for (const brick of bricks) {
+        if (!brick.active) continue;
+        const hit = circleRect(ball, brick);
+        if (!hit.hit) continue;
+        let nx = hit.nx;
+        let ny = hit.ny;
+        const len = Math.hypot(nx, ny);
+        if (len < 0.001) {
+          nx = 0;
+          ny = -1;
         } else {
-          const fromLeft = prevX + BALL.radius <= brick.x;
-          ball.vx = fromLeft ? -Math.abs(ball.vx) : Math.abs(ball.vx);
-          ball.x = fromLeft ? brick.x - BALL.radius - 0.5 : brick.x + brick.width + BALL.radius + 0.5;
+          nx /= len;
+          ny /= len;
         }
-        if (harmless) {
-          events |= EVENT_BRICK;
-        } else if (brick.kind === KIND_STEEL) {
-          spawnBurst(ball.x, ball.y, '#8a93a6', 4, 140);
-          events |= EVENT_BRICK;
+        const dot = ball.vx * nx + ball.vy * ny;
+        if (dot < 0) {
+          ball.vx -= 2 * dot * nx;
+          ball.vy -= 2 * dot * ny;
+        }
+        ball.x += nx * (ball.r + 0.5);
+        ball.y += ny * (ball.r + 0.5);
+        if (attract) {
+          brick.flash = 0.12;
+          events |= EVENT_TINK;
+        } else if (brick.kind === 'steel') {
+          brick.flash = 0.12;
+          burst(ball.x, ball.y, '#d7deea', 4);
+          events |= EVENT_TINK;
         } else {
-          events |= damageBrick(brick, 1);
+          const chain = [];
+          events |= damageBrick(brick, 0, chain);
+          while (chain.length > 0) events |= damageBrick(chain.pop(), 0, chain);
         }
         break;
       }
-
-      if (ball.y - BALL.radius > FIELD.height) {
+      // Lost below the field.
+      if (ball.y - ball.r > FIELD.height) {
         ball.active = false;
-        spawnBurst(ball.x, FIELD.height - 8, '#ff5d5d', 16, 220);
+        if (attract) {
+          serveBall();
+          const served = balls.find((b) => b.active && b.stuck);
+          if (served !== undefined) launchBall(served);
+        }
       }
     }
 
-    // The laser bolts: straight up, one hit each.
-    for (let index = 0; index < bolts.length; index += 1) {
-      const bolt = bolts[index];
-      if (!bolt.active) continue;
-      bolt.y -= 900 * dt;
-      if (bolt.y < 0) {
-        bolt.active = false;
+    // Falling powerups.
+    for (const p of powerups) {
+      if (!p.active) continue;
+      p.y += POWERUP.fallSpeed * dt;
+      if (p.y > FIELD.height) {
+        p.active = false;
         continue;
       }
-      for (let brickIndex = 0; brickIndex < bricks.length; brickIndex += 1) {
-        const brick = bricks[brickIndex];
-        if (!brick.alive) continue;
-        if (bolt.x < brick.x || bolt.x > brick.x + brick.width || bolt.y < brick.y || bolt.y > brick.y + brick.height) continue;
-        bolt.active = false;
-        if (brick.kind !== KIND_STEEL && !harmless) events |= damageBrick(brick, 1);
-        else spawnBurst(bolt.x, bolt.y, '#ffc53d', 5, 160);
-        break;
+      const half = POWERUP.size / 2;
+      if (p.y + half >= PADDLE.y && p.y - half <= PADDLE.y + PADDLE.height
+        && p.x + half >= paddle.x && p.x - half <= paddle.x + paddle.width) {
+        p.active = false;
+        burst(p.x, p.y, '#ffd75e', 10);
+        events |= applyPowerup(p.kind);
       }
     }
 
-    // The powerups: they fall, and the paddle catches them.
-    for (let index = 0; index < powerups.length; index += 1) {
-      const powerup = powerups[index];
-      if (!powerup.active) continue;
-      powerup.y += POWERUP.fallSpeed * dt;
-      if (powerup.y > FIELD.height) {
-        powerup.active = false;
+    // Particles.
+    for (const p of particles) {
+      if (!p.active) continue;
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.active = false;
         continue;
       }
-      const box = { x: powerup.x - POWERUP.size / 2, y: powerup.y - POWERUP.size / 2, width: POWERUP.size, height: POWERUP.size };
-      const paddleBox = { x: paddle.x, y: PADDLE.y, width: paddle.width, height: PADDLE.height };
-      if (!harmless && overlaps(box, paddleBox)) {
-        powerup.active = false;
-        spawnBurst(powerup.x, powerup.y, POWERUP_COLORS[powerup.kind], 10, 180);
-        events |= applyPowerup(powerup.kind);
-      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 320 * dt;
     }
+    for (const b of bricks) if (b.flash > 0) b.flash = Math.max(0, b.flash - dt);
 
-    // A ball lost: when none is left, a life goes and the next ball serves. In the title
-    // demo nothing is lost: the ball just serves again and keeps playing behind the panel.
-    if (harmless && !balls.some((ball) => ball.active)) {
-      state.mode = 'serve';
-      serveBall();
-      launch();
-    }
-    if (!harmless && state.mode === 'play' && !balls.some((ball) => ball.active)) {
+    if (attract) return events;
+
+    // A ball lost: a life goes only when no ball is left in play.
+    if (!balls.some((b) => b.active)) {
       state.lives -= 1;
       state.combo = 0;
-      state.shake = 12;
+      state.multiplier = 1;
+      events |= EVENT_LOST;
       if (state.lives <= 0) {
-        events |= EVENT_LOST | EVENT_OVER;
+        events |= EVENT_OVER;
+        return events;
+      }
+      paddle.width = PADDLE.width;
+      paddle.wideTimer = 0;
+      paddle.laserTimer = 0;
+      state.slowTimer = 0;
+      serveBall();
+    }
+
+    // Wall cleared: next wall, or the win.
+    if (breakableLeft() === 0) {
+      for (const b of balls) b.active = false;
+      for (const p of powerups) p.active = false;
+      for (const bolt of bolts) bolt.active = false;
+      if (state.level >= LEVELS) {
+        events |= EVENT_WIN;
       } else {
-        events |= EVENT_LOST;
-        state.mode = 'serve';
+        events |= EVENT_CLEAR;
+        loadLevel(state.level + 1);
         serveBall();
       }
     }
@@ -503,5 +468,5 @@ export function createWorld(random) {
   }
 
   reset();
-  return { state, reset, loadLevel, launch, fireLaser, step, stepFx, multiplier, bricksLeft };
+  return { state, reset, step, loadLevel, serveBall, breakableLeft };
 }
