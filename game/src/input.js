@@ -12,6 +12,7 @@ export const ACTION_UP = 16;
 export const ACTION_DOWN = 32;
 export const ACTION_BACK = 64;
 export const ACTION_QUIT = 128;
+export const ACTION_DASH = 256;
 
 const LEFT = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT = new Set(['ArrowRight', 'KeyD']);
@@ -21,6 +22,7 @@ const LAUNCH = new Set(['Space', 'Enter']);
 const PAUSE = new Set(['KeyP', 'Escape']);
 const MUTE = new Set(['KeyM']);
 const QUIT = new Set(['KeyQ']);
+const DASH = new Set(['ShiftLeft', 'ShiftRight']);
 
 export function createInput(canvas) {
   let left = false;
@@ -52,6 +54,9 @@ export function createInput(canvas) {
       if (!event.repeat) actions |= ACTION_DOWN;
     } else if (LAUNCH.has(event.code)) {
       if (!event.repeat) actions |= ACTION_LAUNCH | ACTION_FIRE;
+    } else if (DASH.has(event.code)) {
+      // Shift dashes the paddle: a one-shot burst, never a held repeat.
+      if (!event.repeat) actions |= ACTION_DASH;
     } else if (PAUSE.has(event.code)) {
       // Escape also goes back in menus; the loop reads it by screen.
       if (!event.repeat) actions |= ACTION_PAUSE | (event.code === 'Escape' ? ACTION_BACK : 0);

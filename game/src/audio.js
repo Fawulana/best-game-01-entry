@@ -148,6 +148,18 @@ export function createAudio() {
     tone(880, 880, 0.12, 'sine', 0.09, 0.07);
   }
 
+  /** A splitter bursting: two quick pops, one for each mite. */
+  function split() {
+    tone(880, 440, 0.08, 'triangle', 0.09);
+    tone(1175, 587, 0.08, 'triangle', 0.09, 0.06);
+  }
+
+  /** A dash: a short whoosh upward. */
+  function dash() {
+    tone(300, 1400, 0.14, 'sawtooth', 0.05);
+    tone(600, 1800, 0.1, 'sine', 0.04, 0.02);
+  }
+
   /** Fever reached: the combo is at its hottest. */
   function fever() {
     tone(523, 523, 0.07, 'square', 0.07);
@@ -161,7 +173,7 @@ export function createAudio() {
     },
     paddle, brick, crack, tink, powerup, life, laser, lost, clear, win, over,
     enemy, shard, shardHit, shield, bossHit, bossCrit, bossRoar, bossDown,
-    menuMove, menuSelect, fever,
+    menuMove, menuSelect, fever, split, dash,
     isMuted() {
       return muted;
     },

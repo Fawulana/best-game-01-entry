@@ -1,7 +1,7 @@
 // A generative WebAudio score: no audio files, just a lookahead sequencer playing
-// a bass line and an arpeggio from a minor pentatonic scale. Three moods — title
-// (slow and spacious), play (driving) and boss (faster, tenser) — crossfaded by
-// changing the pattern, never by stopping. Everything is guarded: no AudioContext
+// a bass line and an arpeggio from a minor pentatonic scale. Four moods — title
+// (slow and spacious), play (driving), boss (faster, tenser) and endless (quick
+// and restless) — crossfaded by changing the pattern, never by stopping. Everything is guarded: no AudioContext
 // means no music and no error, and the sequencer stops when the tab hides.
 
 const SCALE = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24];
@@ -11,6 +11,8 @@ const PATTERNS = {
   title: { bpm: 76, bass: [0, null, 7, null, 5, null, 3, null], arp: [12, 15, 19, 15, 17, 19, 22, 19] },
   play: { bpm: 112, bass: [0, 0, 7, 0, 5, 5, 3, 7], arp: [12, 19, 15, 22, 17, 15, 19, 24] },
   boss: { bpm: 140, bass: [0, 0, 0, 7, 0, 0, 5, 3], arp: [12, 12, 19, 15, 22, 19, 17, 24] },
+  // Endless Drift: quicker than play, with a restless rising arpeggio.
+  endless: { bpm: 126, bass: [0, 0, 7, 5, 0, 7, 5, 3], arp: [12, 17, 19, 22, 19, 22, 24, 22] },
 };
 
 function freqOf(semi) {
@@ -86,7 +88,7 @@ export function createMusic() {
       nextTime = ctx.currentTime + 0.1;
       timer = setInterval(schedule, 30);
     },
-    /** Switch mood: 'title' | 'play' | 'boss'. */
+    /** Switch mood: 'title' | 'play' | 'boss' | 'endless'. */
     setMode(next) {
       if (PATTERNS[next] !== undefined) mode = next;
     },

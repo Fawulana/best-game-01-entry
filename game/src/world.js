@@ -6,13 +6,13 @@
 // returns, and nothing here reads the clock: the same seed and inputs always give the
 // same game.
 import {
-  BALL, BOSS, BRICK, COMBO, ENEMY, FIELD, LASER, LEVELS, LIVES, MAX_LIVES, PADDLE, POOL, POWERUP, SHARD,
+  BALL, BOSS, BRICK, COMBO, DASH, ENDLESS, ENEMY, FIELD, LASER, LEVELS, LIVES, MAX_LIVES, PADDLE, POOL, POWERUP, SHARD,
 } from './config.js';
-import { WALLS, hitsOf, isBreakable, kindOf } from './levels.js';
+import { WALLS, generateEndlessWall, hitsOf, isBreakable, kindOf } from './levels.js';
 import { randomPick } from './random.js';
 import { pickPowerupKind } from './powerups.js';
 import {
-  ENEMY_INFO, damageEnemy, enemiesLeft, spawnEnemiesForLevel, spawnEnemy, updateEnemies,
+  ENEMY_INFO, ENEMY_MITE, ENEMY_SPLITTER, damageEnemy, enemiesLeft, spawnEnemiesForLevel, spawnEnemy, updateEnemies,
 } from './enemies.js';
 import { bossPoints, createBossState, damageBoss, summonBoss, updateBoss } from './boss.js';
 import {
@@ -41,6 +41,8 @@ export const EVENT_SHIELD = 262144;
 export const EVENT_FEVER = 524288;
 export const EVENT_PHASE = 1048576;
 export const EVENT_WEAVER = 2097152;
+export const EVENT_DASH = 4194304;
+export const EVENT_SPLIT = 8388608;
 
 function circleRect(ball, rect) {
   const cx = Math.max(rect.x, Math.min(ball.x, rect.x + rect.w));
@@ -112,6 +114,11 @@ export function createWorld(random) {
     levelLost: 0, levelShattered: 0, levelTime: 0, time: 0,
     feverAnnounced: false, runStartLevel: 1, justClearedLevel: 0, lastBonus: 0, lastStars: 0,
     lastLevelLost: 0, lastShattered: 0,
+    // The mode this run plays in: 'campaign' for the eight walls, 'endless' for
+    // Endless Drift, where level counts the drift walls cleared so far.
+    mode: 'campaign', endlessWall: 1,
+    // The dash: burstTimer while the burst lasts, cooldown until it can fire again.
+    dashTimer: 0, dashCooldown: 0, dashes: 0,
     stats: { enemies: 0, bosses: 0, crits: 0, shieldsSaved: 0, maxCombo: 0, shardsTaken: 0 },
   };
 
@@ -153,7 +160,8 @@ export function createWorld(random) {
 
   function ballSpeed() {
     const base = BALL.baseSpeed + BALL.speedPerLevel * (state.level - 1) + BALL.speedPerBrick * state.broken;
-    const slowed = state.slowTimer > 0 ? base * BALL.slowFactor : base;
+    const drift = state.mode === 'endless' ? ENDLESS.speedPerWall * (state.endlessWall - 1) : 0;
+    const slowed = state.slowTimer > 0 ? (base + drift) * BALL.slowFactor : base + drift;
     return Math.min(BALL.maxSpeed, slowed);
   }
 
@@ -178,7 +186,10 @@ export function createWorld(random) {
   }
 
   function loadLevel(number) {
-    const wall = WALLS[number - 1];
+    // Endless Drift builds its wall from the seeded random; the campaign reads
+    // the hand-designed wall of that number. Either way the wall object has
+    // the same shape: name, theme, boss, enemies and rows.
+    const wall = state.mode === 'endless' ? generateEndlessWall(number, random) : WALLS[number - 1];
     state.level = number;
     state.levelName = wall.name;
     state.broken = 0;
@@ -233,7 +244,12 @@ export function createWorld(random) {
     ball.trailHead = 0;
   }
 
-  function resetAt(level) {
+  function resetAt(level, mode = 'campaign') {
+    state.mode = mode;
+    state.endlessWall = mode === 'endless' ? level : 1;
+    state.dashTimer = 0;
+    state.dashCooldown = 0;
+    state.dashes = 0;
     paddle.x = (FIELD.width - PADDLE.width) / 2;
     paddle.width = PADDLE.width;
     paddle.wideTimer = 0;
@@ -339,6 +355,12 @@ export function createWorld(random) {
     const shattered = damageEnemy(enemy);
     burst(hitX, hitY, ENEMY_INFO[enemy.kind].color, shattered ? 22 : 6);
     if (!shattered) return events | EVENT_TINK;
+    if (enemy.kind === ENEMY_SPLITTER) {
+      // A splitter bursts into two mites, left and right of where it fell.
+      spawnEnemy(enemies, ENEMY_MITE, hitX - 26, hitY, random);
+      spawnEnemy(enemies, ENEMY_MITE, hitX + 26, hitY, random);
+      events |= EVENT_SPLIT;
+    }
     state.stats.enemies += 1;
     events |= raiseCombo(hitX, hitY);
     const scored = ENEMY_INFO[enemy.kind].points * state.multiplier;
@@ -493,6 +515,14 @@ export function createWorld(random) {
     state.bossPhase = false;
     state.bossSlain = false;
     boss.active = false;
+    if (state.mode === 'endless') {
+      // No win in Endless Drift: the next generated wall opens instead.
+      state.endlessWall = cleared + 1;
+      events |= EVENT_CLEAR;
+      loadLevel(state.endlessWall);
+      serveBall();
+      return events;
+    }
     if (cleared >= LEVELS) {
       return events | EVENT_CLEAR | EVENT_WIN;
     }
@@ -504,14 +534,29 @@ export function createWorld(random) {
 
   /**
    * One fixed step. `control` is { direction (-1, 0, 1), mouseX (number or null),
-   * launch (bool), fire (bool) }. With `attract` set (the title screen's demo) the
-   * ball bounces off the bottom, bricks never break and nothing scores.
+   * launch (bool), fire (bool), dash (bool) }. With `attract` set (the title
+   * screen's demo) the ball bounces off the bottom, bricks never break and
+   * nothing scores. A dash is a short burst of paddle speed on a cooldown.
    */
   function step(dt, control, attract) {
     let events = 0;
     state.time += dt;
     if (!attract) state.levelTime += dt;
     if (state.bannerTimer > 0) state.bannerTimer = Math.max(0, state.bannerTimer - dt);
+    if (state.dashTimer > 0) state.dashTimer = Math.max(0, state.dashTimer - dt);
+    if (state.dashCooldown > 0) state.dashCooldown = Math.max(0, state.dashCooldown - dt);
+    if (!attract && control.dash && state.dashCooldown <= 0) {
+      state.dashTimer = DASH.burstSeconds;
+      state.dashCooldown = DASH.cooldown;
+      state.dashes += 1;
+      burst(paddle.x + paddle.width / 2, PADDLE.y, '#7df3ff', 12);
+      addShake(effects, 2);
+      events |= EVENT_DASH;
+    }
+    const dashing = state.dashTimer > 0;
+    const paddleSpeed = PADDLE.speed * (dashing ? DASH.speedMultiplier : 1);
+    // A dashing paddle leaves an ember trail behind it.
+    if (dashing && !attract) spawnParticle(paddle.x + paddle.width / 2, PADDLE.y + 8, '#7df3ff');
     if (paddle.wideTimer > 0) paddle.wideTimer -= dt;
     if (paddle.narrowTimer > 0) paddle.narrowTimer -= dt;
     if (paddle.laserTimer > 0) paddle.laserTimer -= dt;
@@ -529,11 +574,12 @@ export function createWorld(random) {
       paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, centre - paddle.width / 2));
     }
 
-    // Paddle: the mouse steers it when it moved, else the keys.
+    // Paddle: the mouse steers it when it moved, else the keys. A dash multiplies
+    // the speed, so the paddle can cross the field to a far ball or a shard.
     if (control.mouseX !== null && !attract) {
       const target = Math.max(0, Math.min(FIELD.width - paddle.width, control.mouseX - paddle.width / 2));
       const delta = target - paddle.x;
-      const maxMove = PADDLE.speed * 1.6 * dt;
+      const maxMove = paddleSpeed * 1.6 * dt;
       paddle.x += Math.max(-maxMove, Math.min(maxMove, delta));
     } else if (attract) {
       const flying = balls.find((b) => b.active && !b.stuck);
@@ -543,7 +589,7 @@ export function createWorld(random) {
         paddle.x += Math.max(-PADDLE.speed * dt, Math.min(PADDLE.speed * dt, delta));
       }
     } else {
-      paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, paddle.x + control.direction * PADDLE.speed * dt));
+      paddle.x = Math.max(0, Math.min(FIELD.width - paddle.width, paddle.x + control.direction * paddleSpeed * dt));
     }
 
     if (control.fire) events |= fireLasers();

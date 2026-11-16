@@ -7,11 +7,12 @@ import { FIELD, LEVELS } from './config.js';
 
 export const TITLE_OPTIONS = [
   { id: 'start', label: 'START RUN', hint: 'From First Light to the Core' },
+  { id: 'endless', label: 'ENDLESS DRIFT', hint: 'Walls without end · own best' },
   { id: 'levels', label: 'LEVEL SELECT', hint: 'Replay any unlocked wall' },
   { id: 'howto', label: 'HOW TO PLAY', hint: 'Controls, powerups and wraiths' },
 ];
 
-const MENU = { width: 520, height: 56, gap: 14, top: 372 };
+const MENU = { width: 520, height: 50, gap: 12, top: 344 };
 
 /** The clickable rect of a title-menu option, by index. */
 export function titleOptionRect(index) {

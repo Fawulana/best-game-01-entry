@@ -7,21 +7,26 @@
 LUMENBREAK — a neon breakout game with teeth: bounce the ball with a
 paddle, shatter crystal bricks across eight hand-designed walls, each with
 its own visual theme (aurora, emberfall, steel grid, vines, choir rings,
-void, core), and break the two wardens that guard walls 4 and 8. Three
-wraith kinds haunt the walls — patrolling drifters, diving weavers and
-shard-spitting spitters — and their falling void shards shrink the paddle
-and break the combo. Eight falling powerups (wide paddle, multi-ball,
-laser, slow ball, fireball, catch, shield, extra life), a combo multiplier
-up to ×8 with a FEVER state at ×5, ember chain reactions, hard and steel
-bricks, warden phases with a critical-hit core, level-clear bonuses, and
-stars per wall (3 for a flawless clear) with unlocked walls and best score
-saved between visits. Title menu with a live demo behind it, level select
-with locks and stars, a How to Play guide, HUD (score, best, level, lives,
-combo, wraiths, active effects, warden health bar), pause, game-over and
-victory screens with run stats, all with restart. Screen shake, flashes,
-shockwave rings, floating score popups, ball trails, synthesized WebAudio
-sound effects and a generative three-mood score — no audio files, no
-network, deterministic seeded RNG, fixed 1/60 s simulation.
+void, core), and break the two wardens that guard walls 4 and 8. Five
+wraith kinds haunt the walls — patrolling drifters, diving weavers,
+shard-spitting spitters, splitters that burst into two fast mites, and
+shielded guardians that descend to a hold line — and their falling void
+shards shrink the paddle and break the combo. Eight falling powerups (wide
+paddle, multi-ball, laser, slow ball, fireball, catch, shield, extra life),
+a paddle dash on a 3-second cooldown with its own HUD meter, a combo
+multiplier up to ×8 with a FEVER state at ×5, ember chain reactions, hard
+and steel bricks, warden phases with a critical-hit core, level-clear
+bonuses, and stars per wall (3 for a flawless clear) with unlocked walls
+and best score saved between visits. Endless Drift is a second mode:
+seeded, generated walls that never end, the ball quickening and the wraiths
+gathering as the drift count climbs, with its own best score. Title menu
+with a live demo behind it, level select with locks and stars, a How to
+Play guide, HUD (score, best, level, lives, combo, dash meter, wraiths,
+active effects, warden health bar), pause, game-over and victory screens
+with run stats, all with restart. Screen shake, flashes, shockwave rings,
+floating score popups, ball trails, synthesized WebAudio sound effects and
+a generative four-mood score — no audio files, no network, deterministic
+seeded RNG, fixed 1/60 s simulation.
 
 ## Run it
 
@@ -30,8 +35,8 @@ node serve.ts
 ```
 
 Then open http://localhost:8080 in a browser. Mouse or arrow keys / A D to
-move, Space or click to start, launch and fire the laser, ↑ ↓ menus,
-Enter select, P / Esc pause, Q quit from pause, M mute.
+move, Space or click to start, launch and fire the laser, Shift to dash,
+↑ ↓ menus, Enter select, P / Esc pause, Q quit from pause, M mute.
 
 ---
 

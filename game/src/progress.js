@@ -1,12 +1,14 @@
 // Saved progress: best score, unlocked levels, stars per level, wins and total
-// bricks shattered, kept in localStorage under SAVE_KEY. Everything here is
-// defensive — storage can be off, and a corrupt value must never break a run.
-// The older best-only key is migrated once, so returning players keep their best.
+// bricks shattered, kept in localStorage under SAVE_KEY. Endless Drift keeps its
+// own best and run count beside the campaign record, so the two modes never
+// overwrite each other's best. Everything here is defensive — storage can be
+// off, and a corrupt value must never break a run. The older best-only key is
+// migrated once, so returning players keep their best.
 
 import { BEST_KEY, LEVELS, SAVE_KEY } from './config.js';
 
 export function emptyProgress() {
-  return { best: 0, unlocked: 1, stars: {}, wins: 0, shattered: 0, runs: 0 };
+  return { best: 0, unlocked: 1, stars: {}, wins: 0, shattered: 0, runs: 0, endlessBest: 0, endlessRuns: 0 };
 }
 
 export function loadProgress() {
@@ -30,6 +32,8 @@ export function loadProgress() {
       if (typeof saved.wins === 'number') progress.wins = Math.max(0, Math.floor(saved.wins));
       if (typeof saved.shattered === 'number') progress.shattered = Math.max(0, Math.floor(saved.shattered));
       if (typeof saved.runs === 'number') progress.runs = Math.max(0, Math.floor(saved.runs));
+      if (typeof saved.endlessBest === 'number') progress.endlessBest = Math.max(0, Math.floor(saved.endlessBest));
+      if (typeof saved.endlessRuns === 'number') progress.endlessRuns = Math.max(0, Math.floor(saved.endlessRuns));
       return progress;
     }
     // First run with the new save: carry the old best score over.
@@ -74,6 +78,14 @@ export function recordRunEnd(progress, score, won) {
   if (score > progress.best) progress.best = score;
   progress.runs += 1;
   if (won) progress.wins += 1;
+  saveProgress(progress);
+}
+
+/** Record a finished Endless Drift run: its own best, its own run count. A drift
+ *  run never touches the campaign best, so a long drift cannot hide a campaign win. */
+export function recordEndlessEnd(progress, score) {
+  if (score > progress.endlessBest) progress.endlessBest = score;
+  progress.endlessRuns += 1;
   saveProgress(progress);
 }
 

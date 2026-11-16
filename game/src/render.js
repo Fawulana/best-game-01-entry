@@ -6,7 +6,7 @@
 // help / pause / win / game-over screens. Text that holds a number is rebuilt only
 // when the number changes, so a frame allocates nothing.
 import {
-  BALL, BRICK, COMBO, FIELD, FONT, LASER, LEVELS, PALETTE, PADDLE, POWERUP, SHARD,
+  BALL, BRICK, COMBO, DASH, FIELD, FONT, LASER, LEVELS, PALETTE, PADDLE, POWERUP, SHARD,
 } from './config.js';
 import { createRandom } from './random.js';
 import { themeOf } from './themes.js';
@@ -266,33 +266,63 @@ export function createRenderer(canvas) {
       const info = ENEMY_INFO[enemy.kind];
       const cx = enemy.x + enemy.w / 2;
       const cy = enemy.y + enemy.h / 2;
+      const hw = enemy.w / 2;
+      const hh = enemy.h / 2;
       const flash = enemy.flash > 0;
       const bob = Math.sin(time * 3 + enemy.phase) * 2;
       context.save();
       context.shadowColor = info.color;
       context.shadowBlur = flash ? 26 : 14;
       context.fillStyle = flash ? '#ffffff' : info.color;
-      if (enemy.kind === 'drifter') {
+      if (enemy.kind === 'drifter' || enemy.kind === 'mite') {
         context.beginPath();
-        context.moveTo(cx, cy - 18 + bob);
-        context.lineTo(cx + 16, cy + bob);
-        context.lineTo(cx, cy + 18 + bob);
-        context.lineTo(cx - 16, cy + bob);
+        context.moveTo(cx, cy - hh + bob);
+        context.lineTo(cx + hw, cy + bob);
+        context.lineTo(cx, cy + hh + bob);
+        context.lineTo(cx - hw, cy + bob);
         context.closePath();
         context.fill();
       } else if (enemy.kind === 'weaver') {
         context.beginPath();
-        context.moveTo(cx, cy - 16 + bob);
-        context.lineTo(cx + 15, cy + 12 + bob);
-        context.lineTo(cx - 15, cy + 12 + bob);
+        context.moveTo(cx, cy - hh + bob);
+        context.lineTo(cx + hw, cy + hh * 0.7 + bob);
+        context.lineTo(cx - hw, cy + hh * 0.7 + bob);
         context.closePath();
         context.fill();
+      } else if (enemy.kind === 'splitter') {
+        // Two lobes, joined at the middle — the shape that bursts in two.
+        for (const side of [-0.45, 0.45]) {
+          context.beginPath();
+          context.moveTo(cx + side * hw, cy - hh * 0.8 + bob);
+          context.lineTo(cx + side * hw + hw * 0.55, cy + bob);
+          context.lineTo(cx + side * hw, cy + hh * 0.8 + bob);
+          context.lineTo(cx + side * hw - hw * 0.55, cy + bob);
+          context.closePath();
+          context.fill();
+        }
+      } else if (enemy.kind === 'guardian') {
+        // A heavy hexagon behind a shield ring: the ring fades as hits land.
+        context.beginPath();
+        for (let i = 0; i < 6; i += 1) {
+          const angle = (i * Math.PI) / 3 + time * 0.4;
+          const px = cx + Math.cos(angle) * hw;
+          const py = cy + Math.sin(angle) * hh + bob;
+          if (i === 0) context.moveTo(px, py);
+          else context.lineTo(px, py);
+        }
+        context.closePath();
+        context.fill();
+        context.strokeStyle = enemy.hp >= 3 ? '#8ce8ff' : enemy.hp === 2 ? '#5c7cff' : '#3a2a55';
+        context.lineWidth = 3;
+        context.beginPath();
+        context.arc(cx, cy + bob, hw + 7, 0, Math.PI * 2);
+        context.stroke();
       } else {
         context.beginPath();
         for (let i = 0; i < 6; i += 1) {
           const angle = (i * Math.PI) / 3 + time * 0.6;
-          const px = cx + Math.cos(angle) * 17;
-          const py = cy + Math.sin(angle) * 17 + bob;
+          const px = cx + Math.cos(angle) * hw;
+          const py = cy + Math.sin(angle) * hh + bob;
           if (i === 0) context.moveTo(px, py);
           else context.lineTo(px, py);
         }
@@ -300,16 +330,18 @@ export function createRenderer(canvas) {
         context.fill();
       }
       context.restore();
-      // Dark eye, and a second pip when a spitter still has both hits.
+      // Dark eye, and one pip per hit point above the first.
       context.fillStyle = '#14082e';
       context.beginPath();
-      context.arc(cx, cy + bob, 5, 0, Math.PI * 2);
+      context.arc(cx, cy + bob, Math.max(3, hw * 0.28), 0, Math.PI * 2);
       context.fill();
       if (enemy.maxHp > 1) {
-        context.fillStyle = enemy.hp >= 2 ? info.color : '#3a2a55';
-        context.fillRect(cx - 12, cy - 26 + bob, 10, 4);
-        context.fillStyle = enemy.hp >= 1 ? info.color : '#3a2a55';
-        context.fillRect(cx + 2, cy - 26 + bob, 10, 4);
+        for (let p = 0; p < enemy.maxHp; p += 1) {
+          const pw = 9;
+          const px = cx - ((enemy.maxHp * (pw + 2)) / 2) + p * (pw + 2);
+          context.fillStyle = enemy.hp > p ? info.color : '#3a2a55';
+          context.fillRect(px, cy - hh - 10 + bob, pw, 4);
+        }
       }
     }
   }
@@ -399,10 +431,12 @@ export function createRenderer(canvas) {
       || (paddle.narrowTimer > 0 && paddle.narrowTimer < 2)
       ? Math.floor(time * 6) % 2 === 0 : true;
     if (!blink) return;
-    const color = paddle.narrowTimer > 0 ? '#ff8ca0' : PALETTE.paddle;
+    // A dashing paddle burns brighter, with a wider glow.
+    const dashing = state.dashTimer > 0;
+    const color = dashing ? '#7df3ff' : paddle.narrowTimer > 0 ? '#ff8ca0' : PALETTE.paddle;
     context.save();
     context.shadowColor = color;
-    context.shadowBlur = 18;
+    context.shadowBlur = dashing ? 30 : 18;
     context.fillStyle = color;
     roundRect(context, paddle.x, PADDLE.y, paddle.width, PADDLE.height, 8);
     context.fill();
@@ -568,7 +602,8 @@ export function createRenderer(canvas) {
     context.textBaseline = 'top';
     text(scoreLabel(state.score), 24, 14, 26, PALETTE.text, 'left');
     text(bestLabel(best), 300, 14, 26, PALETTE.muted, 'left');
-    text(levelLabel(`${state.level} / ${LEVELS}`), FIELD.width / 2, 14, 26, PALETTE.text, 'center');
+    // Endless Drift counts drifts, not walls: the heading says so.
+    text(levelLabel(state.mode === 'endless' ? `DRIFT ${state.level}` : `${state.level} / ${LEVELS}`), FIELD.width / 2, 14, 26, PALETTE.text, 'center');
     // The wall's name yields its slot to the warden's bar while a warden is up.
     if (!state.boss.active) {
       text(state.levelName, FIELD.width / 2, 42, 15, themeOf(state.level).accent, 'center', '400');
@@ -600,6 +635,14 @@ export function createRenderer(canvas) {
       context.fillStyle = fever ? '#ff9a3d' : PALETTE.gold;
       context.fillRect(24, 76, (120 * state.multiplier) / COMBO.maxMultiplier, 6);
     }
+    // Dash meter, low on the left where the field is empty — never over the wall.
+    const dashReady = state.dashCooldown <= 0;
+    const dashFraction = dashReady ? 1 : 1 - state.dashCooldown / DASH.cooldown;
+    text(dashReady ? 'DASH READY' : `DASH ${Math.ceil(state.dashCooldown)}s`, 24, 616, 17, dashReady ? '#7df3ff' : PALETTE.muted, 'left', '800');
+    context.fillStyle = '#2a2144';
+    context.fillRect(24, 626, 120, 6);
+    context.fillStyle = '#7df3ff';
+    context.fillRect(24, 626, 120 * dashFraction, 6);
     // Wraiths remaining, bottom right above the hint line — clear of the wall.
     const wraiths = state.enemies.filter((e) => e.active).length;
     if (wraiths > 0 && inGame) {
@@ -623,7 +666,7 @@ export function createRenderer(canvas) {
       text('SPACE / CLICK TO LAUNCH', FIELD.width / 2, 600, 20, PALETTE.gold, 'center', '800');
     }
     // How to play, small, bottom left during play.
-    text('Arrows / A D or mouse — Space launch / fire — P pause — M mute', 24, FIELD.height - 26, 15, PALETTE.muted, 'left', '400');
+    text('Arrows / A D or mouse — Space launch / fire — Shift dash — P pause — M mute', 24, FIELD.height - 26, 15, PALETTE.muted, 'left', '400');
     if (ui.muted) text('MUTED', FIELD.width - 24, FIELD.height - 26, 15, PALETTE.muted, 'right', '400');
   }
 
@@ -668,7 +711,7 @@ export function createRenderer(canvas) {
     text('LUMENBREAK', FIELD.width / 2, 128, 84, PALETTE.text, 'center', '800');
     context.restore();
     text('SHATTER THE CRYSTAL WALLS · BREAK THE WARDENS · TAKE BACK THE LIGHT', FIELD.width / 2, 166, 19, PALETTE.gold, 'center', '600');
-    text('8 walls · 3 wraith kinds · 2 wardens · 8 powerups · stars to earn', FIELD.width / 2, 196, 17, PALETTE.muted, 'center', '400');
+    text('8 walls · 5 wraith kinds · 2 wardens · 8 powerups · endless drift · dash', FIELD.width / 2, 196, 17, PALETTE.muted, 'center', '400');
     // Menu buttons.
     for (let i = 0; i < TITLE_OPTIONS.length; i += 1) {
       const rect = titleOptionRect(i);
@@ -689,7 +732,8 @@ export function createRenderer(canvas) {
     const stars = progress ? totalStars(progress) : 0;
     const wins = progress ? progress.wins : 0;
     text(best > 0 ? bestLabel(best) : 'NO BEST YET', FIELD.width / 2, 608, 20, PALETTE.muted, 'center');
-    text(`STARS ${stars}/${LEVELS * 3}   ·   WINS ${wins}`, FIELD.width / 2, 634, 18, PALETTE.gold, 'center');
+    const driftBest = progress && progress.endlessBest > 0 ? `   ·   DRIFT BEST ${progress.endlessBest}` : '';
+    text(`STARS ${stars}/${LEVELS * 3}   ·   WINS ${wins}${driftBest}`, FIELD.width / 2, 634, 18, PALETTE.gold, 'center');
     const nodeGap = 44;
     const firstX = FIELD.width / 2 - ((LEVELS - 1) * nodeGap) / 2;
     for (let level = 1; level <= LEVELS; level += 1) {
@@ -772,6 +816,7 @@ export function createRenderer(canvas) {
       '← → / A D — move paddle',
       'Mouse — steer paddle',
       'Space / click — launch, fire',
+      'Shift — dash (3s cooldown)',
       'P / Esc — pause',
       'M — mute · Q — quit (pause)',
       '↑ ↓ — menus · Enter — select',
@@ -787,10 +832,14 @@ export function createRenderer(canvas) {
       'Drifter — patrols, 1 hit',
       'Weaver — dives, don\'t let it land',
       'Spitter — shoots shards, 2 hits',
+      'Splitter — bursts into 2 mites',
+      'Guardian — shielded, 3 hits',
+      'Mite — fast shard of a splitter',
       'Shards shrink the paddle',
       'Wardens guard walls 4 and 8',
       'Hit a warden\'s core for CRITS',
       'Combo ×5+ is FEVER — big points',
+      'Endless Drift: walls never end',
     ];
     foes.forEach((line, i) => text(line, colX[2], 198 + i * 28, 16, PALETTE.text, 'left', '400'));
     text('SCORING — bricks × combo multiplier, wraiths, warden bonuses, clear bonus, 3 stars for a flawless wall.', FIELD.width / 2, 560, 17, PALETTE.muted, 'center', '400');
@@ -858,13 +907,17 @@ export function createRenderer(canvas) {
         'The crystals will wait for you.',
         'Powerups: W wide · M multi · L laser · S slow',
         'F fireball · C catch · N shield · + extra life',
+        'Shift dashes the paddle (3s cooldown).',
         'Dodge the red shards. Hit the warden\'s core for crits.',
+        'Endless Drift never ends — chase your best.',
       ], 'P resume · Q quit to title', PALETTE.paddle);
     } else if (screen === SCREEN_OVER) {
       const lines = [
         finalLabel(state.score),
         bestLabel(best),
-        `Reached level ${state.level} of ${LEVELS} — ${state.levelName}`,
+        state.mode === 'endless'
+          ? `Endless Drift — reached drift ${state.level}`
+          : `Reached level ${state.level} of ${LEVELS} — ${state.levelName}`,
         bricksLabel(state.totalBroken),
         wraithLabel(state.stats.enemies),
         bossLabel(state.stats.bosses),

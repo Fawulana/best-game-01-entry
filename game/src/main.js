@@ -1,8 +1,9 @@
 // Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s
 // steps (several in a slow frame, none in a fast one), and the renderer paints what is
 // there. The game moves between seven screens: title, level select, how to play, play,
-// paused, game over and win. Progress (best, unlocked walls, stars) is saved on every
-// level clear and run end.
+// paused, game over and win. Two modes: the campaign's eight walls, and Endless Drift,
+// where generated walls never end. Progress (best, unlocked walls, stars, drift best)
+// is saved on every level clear and run end.
 //
 // ?seed=N fixes the random pattern. ?shot=start|play|win|end (with &seed=N) stages that
 // scene instead of running the loop, paints it twice and sets window.__shotReady for a
@@ -11,12 +12,12 @@ import { LEVELS, STEP } from './config.js';
 import { createRandom } from './random.js';
 import {
   EVENT_BOSS_CRIT, EVENT_BOSS_DOWN, EVENT_BOSS_HIT, EVENT_BOSS_RISE, EVENT_BRICK,
-  EVENT_CLEAR, EVENT_CRACK, EVENT_ENEMY, EVENT_FEVER, EVENT_LASER, EVENT_LIFE,
+  EVENT_CLEAR, EVENT_CRACK, EVENT_DASH, EVENT_ENEMY, EVENT_FEVER, EVENT_LASER, EVENT_LIFE,
   EVENT_LOST, EVENT_OVER, EVENT_PADDLE, EVENT_PHASE, EVENT_POWERUP, EVENT_SHARD,
-  EVENT_SHARD_HIT, EVENT_SHIELD, EVENT_TINK, EVENT_WEAVER, EVENT_WIN, createWorld,
+  EVENT_SHARD_HIT, EVENT_SHIELD, EVENT_SPLIT, EVENT_TINK, EVENT_WEAVER, EVENT_WIN, createWorld,
 } from './world.js';
 import {
-  ACTION_BACK, ACTION_DOWN, ACTION_FIRE, ACTION_LAUNCH, ACTION_MUTE, ACTION_PAUSE,
+  ACTION_BACK, ACTION_DASH, ACTION_DOWN, ACTION_FIRE, ACTION_LAUNCH, ACTION_MUTE, ACTION_PAUSE,
   ACTION_QUIT, ACTION_UP, createInput,
 } from './input.js';
 import { createAudio } from './audio.js';
@@ -26,7 +27,7 @@ import {
   SCREEN_WIN, createRenderer,
 } from './render.js';
 import { stageShot } from './shots.js';
-import { loadProgress, recordLevelClear, recordRunEnd } from './progress.js';
+import { loadProgress, recordEndlessEnd, recordLevelClear, recordRunEnd } from './progress.js';
 import {
   HELP_BACK_RECT, LEVELS_BACK_RECT, TITLE_OPTIONS, hitTestRects, levelCardRect,
   titleOptionRect,
@@ -72,6 +73,8 @@ function runGame() {
   // Launch and fire presses wait here until a simulation step consumes them: a
   // press that lands in a frame with no step to run must not be lost.
   let pendingLaunchFire = 0;
+  // A dash press waits the same way, so a Shift between frames still dashes.
+  let pendingDash = false;
 
   // The live state, for scripted play-tests: screen, score, lives, level and balls.
   window.__game = {
@@ -94,6 +97,11 @@ function runGame() {
     get unlocked() { return progress.unlocked; },
     get menuIndex() { return menuIndex; },
     get selectIndex() { return selectIndex; },
+    get mode() { return world.state.mode; },
+    get endlessWall() { return world.state.endlessWall; },
+    get dashCooldown() { return world.state.dashCooldown; },
+    get dashes() { return world.state.dashes; },
+    get endlessBest() { return progress.endlessBest; },
   };
 
   // Screen readers (and anyone watching the page's text) hear the screen changes and each lost ball.
@@ -112,6 +120,18 @@ function runGame() {
     announce(`Playing Lumenbreak, wall ${level}. 3 lives. Clear the wall.`);
   }
 
+  /** Endless Drift: generated walls that never end, their own best score. */
+  function startEndless() {
+    audio.unlock();
+    music.unlock();
+    music.setMode('endless');
+    world.resetAt(1, 'endless');
+    runStars = [];
+    accumulator = 0;
+    screen = SCREEN_PLAY;
+    announce('Endless Drift. The walls never end. 3 lives. Chase your best.');
+  }
+
   function goToTitle() {
     world.reset();
     music.setMode('title');
@@ -120,13 +140,18 @@ function runGame() {
   }
 
   function endGame(won) {
-    recordRunEnd(progress, world.state.score, won);
+    // A drift run keeps its own best; a campaign run keeps the campaign best.
+    if (world.state.mode === 'endless') recordEndlessEnd(progress, world.state.score);
+    else recordRunEnd(progress, world.state.score, won);
     progress = loadProgress();
     music.setMode('title');
     screen = won ? SCREEN_WIN : SCREEN_OVER;
     if (won) {
       audio.win();
       announce(`You win. Score ${world.state.score}. Best ${progress.best}.`);
+    } else if (world.state.mode === 'endless') {
+      audio.over();
+      announce(`Drift over at wall ${world.state.endlessWall}. Score ${world.state.score}. Drift best ${progress.endlessBest}.`);
     } else {
       audio.over();
       announce(`Game over. Score ${world.state.score}. Best ${progress.best}.`);
@@ -151,6 +176,8 @@ function runGame() {
     if (events & (EVENT_BOSS_RISE | EVENT_PHASE)) audio.bossRoar();
     if (events & EVENT_FEVER) audio.fever();
     if (events & EVENT_WEAVER) audio.shardHit();
+    if (events & EVENT_DASH) audio.dash();
+    if (events & EVENT_SPLIT) audio.split();
     if (events & EVENT_LOST) {
       audio.lost();
       announce(world.state.lives === 1 ? 'Ball lost. 1 life left.' : `Ball lost. ${world.state.lives} lives left.`);
@@ -159,6 +186,8 @@ function runGame() {
   }
 
   function recordClear() {
+    // Endless Drift clears no campaign wall and earns no stars.
+    if (world.state.mode === 'endless') return;
     const cleared = world.state.justClearedLevel;
     if (cleared < 1) return;
     const stars = recordLevelClear(progress, cleared, world.state.lastLevelLost, world.state.lastShattered);
@@ -172,6 +201,7 @@ function runGame() {
     const option = TITLE_OPTIONS[index].id;
     audio.menuSelect();
     if (option === 'start') startGameAt(1);
+    else if (option === 'endless') startEndless();
     else if (option === 'levels') {
       selectIndex = Math.min(progress.unlocked, LEVELS);
       screen = SCREEN_SELECT;
@@ -251,11 +281,12 @@ function runGame() {
       }
       return;
     }
-    // Game over and win: restart, or step back to the title.
+    // Game over and win: restart in the mode just played, or step back to the title.
     if (actions & ACTION_BACK) {
       goToTitle();
     } else if (actions & (ACTION_LAUNCH | ACTION_FIRE)) {
-      startGameAt(1);
+      if (world.state.mode === 'endless') startEndless();
+      else startGameAt(1);
     }
   }
 
@@ -345,6 +376,7 @@ function runGame() {
     }
     handleSelectDirection();
     pendingLaunchFire |= actions & (ACTION_LAUNCH | ACTION_FIRE);
+    pendingDash = pendingDash || Boolean(actions & ACTION_DASH);
     if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
       const control = {
         direction: input.direction(),
@@ -352,22 +384,31 @@ function runGame() {
         // A launch or fire press applies to the first step of this frame only.
         launch: Boolean(pendingLaunchFire & ACTION_LAUNCH),
         fire: Boolean(pendingLaunchFire & ACTION_FIRE),
+        dash: pendingDash,
       };
       let stepped = false;
       while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
         step(control);
         control.launch = false;
         control.fire = false;
+        control.dash = false;
         stepped = true;
         accumulator -= STEP;
       }
-      if (stepped) pendingLaunchFire = 0;
-      // The score turns tense while a warden is up.
-      if (screen === SCREEN_PLAY) music.setMode(world.state.boss.active ? 'boss' : 'play');
+      if (stepped) {
+        pendingLaunchFire = 0;
+        pendingDash = false;
+      }
+      // The score turns tense while a warden is up; Endless Drift has its own mood.
+      if (screen === SCREEN_PLAY) {
+        music.setMode(world.state.boss.active ? 'boss' : world.state.mode === 'endless' ? 'endless' : 'play');
+      }
     } else {
       accumulator = 0;
     }
-    renderer.draw(world.state, screen, progress.best, now / 1000, {
+    // The HUD's best is the mode's own best: the drift best in Endless Drift.
+    const bestToShow = screen === SCREEN_PLAY && world.state.mode === 'endless' ? progress.endlessBest : progress.best;
+    renderer.draw(world.state, screen, bestToShow, now / 1000, {
       progress, menuIndex, selectIndex, muted, runStars,
     });
   }

@@ -3,10 +3,12 @@
 // (game/index.html and its ES modules, no library, no network request). This program
 // hands it in: it copies game/ and screenshots/ from beside this file to /output and
 // writes /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. The game is a neon breakout: shatter crystal walls across six hand-designed
-// levels, chain ember bricks, catch falling powerups, and clear every wall to win.
-// Nothing here is generated or time-dependent — the files are copied verbatim — so
-// two runs of this program write byte-identical outputs.
+// library. The game is a neon breakout: shatter crystal walls across eight hand-designed
+// levels, chain ember bricks, catch falling powerups, dash the paddle out of trouble,
+// hunt five kinds of crystal wraith, and clear every wall to win — or drift on
+// forever in Endless Drift, where generated walls, quickening balls and gathering
+// wraiths never end. Nothing here is generated or time-dependent — the files are
+// copied verbatim — so two runs of this program write byte-identical outputs.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

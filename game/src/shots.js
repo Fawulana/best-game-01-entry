@@ -2,7 +2,8 @@
 // forward from a fresh world for a fixed number of steps, steered by a simple autopilot
 // (the paddle chases the ball's x), so the frame is what a real game looks like and the
 // same seed always gives the same frame. The play scene is the Ember Warden fight —
-// health bar, shards, wraiths and falling powerups mid-battle. The win scene stages
+// health bar, shards, wraiths (including the new splitter and guardian) and falling
+// powerups mid-battle, the dash meter refilling. The win scene stages
 // level 8 with a pocket of bricks and a near-broken warden; the end scene steers the
 // paddle away from the ball. Staged progress (unlocked walls, stars) is shown so the
 // title and win screens read as a played game, not a fresh install.
@@ -21,7 +22,7 @@ const END_LIMIT_SECONDS = 600;
 /** Progress as a played game would show it: six walls open, stars earned, one win. */
 function stagedProgress(best) {
   return {
-    best, unlocked: 6, wins: 1, shattered: 842, runs: 6,
+    best, unlocked: 6, wins: 1, shattered: 842, runs: 6, endlessBest: 18400, endlessRuns: 3,
     stars: { 1: 3, 2: 3, 3: 2, 4: 2, 5: 1 },
   };
 }
@@ -112,6 +113,15 @@ function stageBossFight(world) {
     if (!world.state.enemies.some((e) => e.active)) {
       spawnEnemy(world.state.enemies, 'drifter', 980, 380, createRandom(99));
     }
+    // The new wraiths join the fight: a splitter and a guardian, mid-field.
+    if (!world.state.enemies.some((e) => e.active && e.kind === 'splitter')) {
+      spawnEnemy(world.state.enemies, 'splitter', 300, 400, createRandom(7));
+    }
+    if (!world.state.enemies.some((e) => e.active && e.kind === 'guardian')) {
+      spawnEnemy(world.state.enemies, 'guardian', 1100, 300, createRandom(8));
+    }
+    // The dash just fired, so its cooldown meter reads mid-refill in the HUD.
+    world.state.dashCooldown = 1.5;
     return true;
   }
   return false;

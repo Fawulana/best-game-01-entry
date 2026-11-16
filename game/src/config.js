@@ -1,8 +1,9 @@
 // LUMENBREAK tuning: every number and colour in one place. The playfield is a fixed
 // 1280x720 logical area; the renderer scales it to the window, so no rule below depends
 // on the screen size. A neon breakout with teeth: shatter crystal walls, chain ember
-// bricks, dodge void shards, hunt three kinds of crystal wraith, catch eight falling
-// powerups, and break two wardens to win. Eight themed walls, saved progress, stars.
+// bricks, dodge void shards, hunt five kinds of crystal wraith, catch eight falling
+// powerups, dash the paddle out of trouble, and break two wardens to win — or drift
+// on forever in Endless Drift, where the walls never stop coming.
 
 export const FIELD = { width: 1280, height: 720, top: 92 };
 
@@ -20,6 +21,10 @@ export const PADDLE = {
   narrowWidth: 76,
   narrowSeconds: 6,
 };
+
+/** The dash: a short burst of paddle speed on a cooldown, for dodging shards and
+ *  reaching a far ball. While dashing the paddle leaves an ember trail. */
+export const DASH = { cooldown: 3, burstSeconds: 0.35, speedMultiplier: 2.2 };
 
 export const BALL = {
   radius: 7,
@@ -66,16 +71,26 @@ export const POWERUP = {
 
 export const LASER = { width: 5, height: 16, speed: 900, cooldown: 0.22 };
 
-/** Crystal wraiths: drifters patrol, weavers dive in sine waves, spitters shoot shards. */
+/** Crystal wraiths: drifters patrol, weavers dive in sine waves, spitters shoot
+ *  shards, splitters burst into two mites, guardians descend behind a shield. */
 export const ENEMY = {
   size: 34,
   drifterSpeed: 120,
   weaverSpeed: 55,
   weaverSway: 90,
   spitterFireSeconds: 2.4,
+  splitterSpeed: 95,
+  guardianSpeed: 60,
+  guardianDescent: 42,
+  guardianHoldY: 360,
+  miteSpeed: 215,
+  miteSize: 20,
   drifterPoints: 150,
   weaverPoints: 200,
   spitterPoints: 300,
+  splitterPoints: 250,
+  guardianPoints: 400,
+  mitePoints: 100,
   dropChance: 0.35,
 };
 
@@ -91,8 +106,20 @@ export const BOSS = {
   spawnSeconds: 8,
 };
 
+/** Endless Drift: each drift wall is harder than the last — the ball quickens and
+ *  more wraiths haunt it, without end. The drift number is the wall count. */
+export const ENDLESS = {
+  speedPerWall: 9,
+  wraithBase: 2,
+  wraithPerWall: 1,
+  maxWraiths: 8,
+  guardianFromWall: 2,
+  splitterFromWall: 2,
+  steelFromWall: 3,
+};
+
 /** How many balls, powerups, bolts, particles, enemies, shards and popups can exist at once. */
-export const POOL = { balls: 8, powerups: 12, bolts: 24, particles: 420, enemies: 10, shards: 18, texts: 24 };
+export const POOL = { balls: 8, powerups: 12, bolts: 24, particles: 420, enemies: 12, shards: 18, texts: 24 };
 
 export const PALETTE = {
   backdrop: '#070312',
@@ -104,6 +131,7 @@ export const PALETTE = {
   gold: '#ffd75e',
   paddle: '#39e6ff',
   paddleCore: '#e8fbff',
+  dashTrail: '#7df3ff',
   ball: '#ffffff',
   ballTrail: '#39e6ff',
   fireball: '#ff9a3d',
@@ -116,7 +144,7 @@ export const PALETTE = {
   tierEdge: ['#a78bff', '#d18cff', '#ff8ce8', '#ff8ca0', '#ffd28c'],
   power: { W: '#39e6ff', M: '#ff5ce1', L: '#ffd75e', S: '#7dff9e', F: '#ff9a3d', C: '#8ce8ff', N: '#7dffd4', '+': '#ff5c7a' },
   banner: '#ffd75e',
-  enemy: { drifter: '#5ce1ff', weaver: '#c792ff', spitter: '#ff6b9e' },
+  enemy: { drifter: '#5ce1ff', weaver: '#c792ff', spitter: '#ff6b9e', splitter: '#e8ff5c', guardian: '#8ce8ff', mite: '#c8ff5c' },
   shard: '#ff4d6d',
   boss: '#ff5c3d',
   bossCore: '#ffe08a',
