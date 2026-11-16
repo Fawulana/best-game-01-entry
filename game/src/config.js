@@ -1,7 +1,8 @@
 // LUMENBREAK tuning: every number and colour in one place. The playfield is a fixed
 // 1280x720 logical area; the renderer scales it to the window, so no rule below depends
-// on the screen size. A neon breakout: shatter crystal walls, chain ember bricks, catch
-// falling powerups, and clear all six walls to win.
+// on the screen size. A neon breakout with teeth: shatter crystal walls, chain ember
+// bricks, dodge void shards, hunt three kinds of crystal wraith, catch eight falling
+// powerups, and break two wardens to win. Eight themed walls, saved progress, stars.
 
 export const FIELD = { width: 1280, height: 720, top: 92 };
 
@@ -12,20 +13,24 @@ export const PADDLE = {
   width: 116,
   height: 16,
   y: 668,
-  speed: 760,
+  speed: 780,
   wideWidth: 188,
   wideSeconds: 12,
   laserSeconds: 10,
+  narrowWidth: 76,
+  narrowSeconds: 6,
 };
 
 export const BALL = {
   radius: 7,
   baseSpeed: 430,
-  maxSpeed: 820,
-  speedPerLevel: 26,
-  speedPerBrick: 1.6,
+  maxSpeed: 840,
+  speedPerLevel: 24,
+  speedPerBrick: 1.5,
   slowFactor: 0.62,
   slowSeconds: 8,
+  fireballSeconds: 9,
+  catchSeconds: 10,
 };
 
 export const BRICK = {
@@ -48,21 +53,46 @@ export const BRICK = {
 
 export const LIVES = 3;
 export const MAX_LIVES = 5;
-export const LEVELS = 6;
+export const LEVELS = 8;
 
 /** Combo: consecutive bricks broken since the ball last touched the paddle. */
-export const COMBO = { maxMultiplier: 5 };
+export const COMBO = { maxMultiplier: 8, feverAt: 5 };
 
 export const POWERUP = {
   size: 30,
   fallSpeed: 185,
-  kinds: ['W', 'M', 'L', 'S', '+'],
+  kinds: ['W', 'M', 'L', 'S', 'F', 'C', 'N', '+'],
 };
 
 export const LASER = { width: 5, height: 16, speed: 900, cooldown: 0.22 };
 
-/** How many balls, bricks, powerups, bolts and particles can exist at once. */
-export const POOL = { balls: 8, powerups: 12, bolts: 24, particles: 320 };
+/** Crystal wraiths: drifters patrol, weavers dive in sine waves, spitters shoot shards. */
+export const ENEMY = {
+  size: 34,
+  drifterSpeed: 120,
+  weaverSpeed: 55,
+  weaverSway: 90,
+  spitterFireSeconds: 2.4,
+  drifterPoints: 150,
+  weaverPoints: 200,
+  spitterPoints: 300,
+  dropChance: 0.35,
+};
+
+/** Falling void shards: a shard that hits the paddle shrinks it and breaks the combo. */
+export const SHARD = { width: 12, height: 22, fallSpeed: 240 };
+
+/** The two wardens: the Ember Warden guards level 4, the Core Warden level 8. */
+export const BOSS = {
+  ember: { name: 'WARDEN OF EMBERS', hp: 14, width: 220, height: 54, speed: 150, points: 2000, coreRadius: 20 },
+  core: { name: 'THE CORE WARDEN', hp: 22, width: 260, height: 60, speed: 185, points: 3000, coreRadius: 24 },
+  y: 132,
+  fireSeconds: 2.0,
+  spawnSeconds: 8,
+};
+
+/** How many balls, powerups, bolts, particles, enemies, shards and popups can exist at once. */
+export const POOL = { balls: 8, powerups: 12, bolts: 24, particles: 420, enemies: 10, shards: 18, texts: 24 };
 
 export const PALETTE = {
   backdrop: '#070312',
@@ -76,6 +106,7 @@ export const PALETTE = {
   paddleCore: '#e8fbff',
   ball: '#ffffff',
   ballTrail: '#39e6ff',
+  fireball: '#ff9a3d',
   steel: '#8f9bb3',
   steelEdge: '#d7deea',
   ember: '#ff7a2f',
@@ -83,11 +114,19 @@ export const PALETTE = {
   // Crystal tiers, dimmest to brightest.
   tier: ['#7c5cff', '#b45cff', '#ff5ce1', '#ff5c7a', '#ffb35c'],
   tierEdge: ['#a78bff', '#d18cff', '#ff8ce8', '#ff8ca0', '#ffd28c'],
-  power: { W: '#39e6ff', M: '#ff5ce1', L: '#ffd75e', S: '#7dff9e', '+': '#ff5c7a' },
+  power: { W: '#39e6ff', M: '#ff5ce1', L: '#ffd75e', S: '#7dff9e', F: '#ff9a3d', C: '#8ce8ff', N: '#7dffd4', '+': '#ff5c7a' },
   banner: '#ffd75e',
+  enemy: { drifter: '#5ce1ff', weaver: '#c792ff', spitter: '#ff6b9e' },
+  shard: '#ff4d6d',
+  boss: '#ff5c3d',
+  bossCore: '#ffe08a',
+  shield: '#7dffd4',
 };
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
 /** Where the best score is kept between visits (this browser only). */
 export const BEST_KEY = 'lumenbreak.best';
+
+/** Where progress (unlocked levels, stars, wins) is kept between visits. */
+export const SAVE_KEY = 'lumenbreak.progress.v2';

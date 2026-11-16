@@ -90,11 +90,81 @@ export function createAudio() {
     notes.forEach((freq, i) => tone(freq, freq * 0.9, 0.28, 'sawtooth', 0.08, i * 0.16));
   }
 
+  /** A wraith shattering: a downward shimmer. */
+  function enemy() {
+    tone(980, 240, 0.16, 'triangle', 0.11);
+    tone(1470, 360, 0.12, 'sine', 0.07, 0.03);
+  }
+
+  /** A shard being spat: a short hiss downward. */
+  function shard() {
+    tone(720, 180, 0.1, 'sawtooth', 0.04);
+  }
+
+  /** A shard striking the paddle: a dull, punishing thud. */
+  function shardHit() {
+    tone(160, 60, 0.22, 'sawtooth', 0.14);
+    tone(90, 45, 0.25, 'square', 0.1, 0.02);
+  }
+
+  /** The shield catching a lost ball: a bright rescue chime. */
+  function shield() {
+    tone(784, 784, 0.1, 'sine', 0.11);
+    tone(1175, 1175, 0.18, 'sine', 0.11, 0.08);
+  }
+
+  /** A warden taking a hit: a deep crystal clang. */
+  function bossHit() {
+    tone(196, 120, 0.14, 'square', 0.1);
+    tone(1180, 900, 0.08, 'sine', 0.05);
+  }
+
+  /** A critical hit on the warden's core: a rising shriek. */
+  function bossCrit() {
+    tone(660, 1980, 0.18, 'sawtooth', 0.09);
+    tone(1320, 2640, 0.14, 'sine', 0.07, 0.04);
+  }
+
+  /** A warden rising: a low roar that climbs. */
+  function bossRoar() {
+    tone(82, 220, 0.7, 'sawtooth', 0.13);
+    tone(55, 110, 0.7, 'square', 0.09, 0.05);
+  }
+
+  /** A warden falling: a long, bright collapse. */
+  function bossDown() {
+    const notes = [1047, 880, 784, 659, 523, 784, 1047];
+    notes.forEach((freq, i) => tone(freq, freq, 0.2, 'triangle', 0.11, i * 0.09));
+  }
+
+  /** Menu cursor moving: the quietest blip in the game. */
+  function menuMove() {
+    tone(660, 660, 0.05, 'sine', 0.05);
+  }
+
+  /** Menu selection confirmed: two rising notes. */
+  function menuSelect() {
+    tone(587, 587, 0.08, 'sine', 0.09);
+    tone(880, 880, 0.12, 'sine', 0.09, 0.07);
+  }
+
+  /** Fever reached: the combo is at its hottest. */
+  function fever() {
+    tone(523, 523, 0.07, 'square', 0.07);
+    tone(784, 784, 0.07, 'square', 0.07, 0.06);
+    tone(1047, 1047, 0.16, 'square', 0.08, 0.12);
+  }
+
   return {
     unlock() {
       ensure();
     },
     paddle, brick, crack, tink, powerup, life, laser, lost, clear, win, over,
+    enemy, shard, shardHit, shield, bossHit, bossCrit, bossRoar, bossDown,
+    menuMove, menuSelect, fever,
+    isMuted() {
+      return muted;
+    },
     toggleMute() {
       muted = !muted;
       return muted;
